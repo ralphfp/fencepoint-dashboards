@@ -195,11 +195,10 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: query })
       });
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error("Query error " + response.status + ": " + err);
-      }
       const parsed = await response.json();
+      if (!response.ok || parsed.debug || parsed.error) {
+        throw new Error("Query error " + response.status + ": " + JSON.stringify(parsed));
+      }
       return parsed.results[0].rows;
     }
 
