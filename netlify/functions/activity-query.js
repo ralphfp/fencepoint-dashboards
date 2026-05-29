@@ -123,12 +123,15 @@ async function handleSql(sql, uid) {
   if (sql.includes('sale_order') && !sql.includes('account_move') && !sql.includes('pos_order')) {
     const dateFromMatch = sql.match(/\[date_order\] >= '([^']+)'/);
     const dateToMatch = sql.match(/\[date_order\] < '([^']+)'/);
+    // Check if query filters by confirmed state
+    const stateFilter = sql.includes("'sale'") || sql.includes("'done'");
     const domain = [];
+    if (stateFilter) domain.push(['state', 'in', ['sale', 'done']]);
     if (dateFromMatch) domain.push(['date_order', '>=', dateFromMatch[1]]);
     if (dateToMatch) domain.push(['date_order', '<', dateToMatch[1]]);
 
     const rows = await odooCall(uid, 'sale.order', 'search_read', [domain],
-      { fields: ['name', 'state', 'date_order', 'user_id', 'amount_untaxed', 'margin'], limit: 500 });
+      { fields: ['name', 'state', 'date_order', 'user_id', 'amount_untaxed', 'margin', 'team_id', 'partner_id'], limit: 2000 });
 
     return rows.map(r => ({
       id: r.id,
@@ -138,6 +141,8 @@ async function handleSql(sql, uid) {
       user_id_label: Array.isArray(r.user_id) ? r.user_id[1] : '',
       amount_untaxed: r.amount_untaxed || 0,
       margin: r.margin || 0,
+      team_id_label: Array.isArray(r.team_id) ? r.team_id[1] : '',
+      partner_id_label: Array.isArray(r.partner_id) ? r.partner_id[1] : '',
     }));
   }
 
@@ -179,21 +184,38 @@ async function handleSql(sql, uid) {
     }));
   }
 
-  // account_move (invoices)
+  // account_move (invoices) - also handles JOIN with sale_order for GP
   if (sql.includes('account_move') && !sql.includes('pos_order')) {
     const dateFromMatch = sql.match(/\[invoice_date\] >= '([^']+)'/);
     const dateToMatch = sql.match(/\[invoice_date\] < '([^']+)'/);
-    const domain = [
-      ['move_type', 'in', ['out_invoice', 'out_refund']],
+
+    // Check if this is the GP query (JOIN with sale_order for margin)
+    const isGPQuery = sql.includes('[margin]') || sql.includes('sale_order].[margin]');
+
+    const invDomain = [
+      ['move_type', '=', 'out_invoice'],
       ['state', '=', 'posted'],
     ];
-    if (dateFromMatch) domain.push(['invoice_date', '>=', dateFromMatch[1]]);
-    if (dateToMatch) domain.push(['invoice_date', '<', dateToMatch[1]]);
+    if (dateFromMatch) invDomain.push(['invoice_date', '>=', dateFromMatch[1]]);
+    if (dateToMatch) invDomain.push(['invoice_date', '<', dateToMatch[1]]);
 
-    const rows = await odooCall(uid, 'account.move', 'search_read', [domain],
-      { fields: ['move_type', 'amount_untaxed', 'invoice_origin', 'partner_id'], limit: 500 });
+    const invoices = await odooCall(uid, 'account.move', 'search_read', [invDomain],
+      { fields: ['invoice_origin', 'amount_untaxed', 'partner_id', 'move_type'], limit: 2000 });
 
-    return rows.map(r => ({
+    if (isGPQuery) {
+      // Get sale order names from invoice origins, then fetch margins
+      const origins = [...new Set(invoices.map(i => i.invoice_origin).filter(o => o && o.trim()))];
+      if (origins.length === 0) return [];
+      const soDomain = [['name', 'in', origins]];
+      const soRows = await odooCall(uid, 'sale.order', 'search_read', [soDomain],
+        { fields: ['name', 'margin'], limit: 2000 });
+      return soRows.map(r => ({
+        id: r.id,
+        margin: r.margin || 0,
+      }));
+    }
+
+    return invoices.map(r => ({
       move_type: r.move_type || '',
       amount_untaxed: r.amount_untaxed || 0,
       invoice_origin: r.invoice_origin || '',
