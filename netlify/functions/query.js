@@ -15,7 +15,7 @@ exports.handler = async function(event) {
         "anthropic-beta": "mcp-client-2025-04-04"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 2000,
         system: 'You are a data query assistant. When given a SQL query, execute it using the queryData tool and return ONLY a raw JSON object with this exact structure: {"results":[{"rows":[[val1,val2,...],...]}]}. No explanation, no markdown, no code fences.',
         messages: [{ role: "user", content: "Execute this SQL and return results as JSON: " + query }],
