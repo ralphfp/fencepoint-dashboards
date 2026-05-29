@@ -12,33 +12,15 @@ exports.handler = async function(event) {
     const ODOO_USER    = process.env.ODOO_USER;
     const ODOO_API_KEY = process.env.ODOO_API_KEY;
 
-    // Step 1: authenticate
-    const authRes = await fetch(ODOO_URL + '/web/session/authenticate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', method: 'call', id: 1,
-        params: { db: ODOO_DB, login: ODOO_USER, password: ODOO_API_KEY }
-      })
-    });
-
-    const authData = await authRes.json();
-    const uid = authData.result && authData.result.uid;
-    if (!uid) {
-      return { statusCode: 502, body: JSON.stringify({ error: 'Odoo auth failed', detail: authData }) };
-    }
-
-    const cookie = authRes.headers.get('set-cookie') || '';
-
-    // Step 2: call model method
+    // Use Odoo JSON-RPC with API key via basic auth
     const rpcRes = await fetch(ODOO_URL + '/web/dataset/call_kw', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Cookie': cookie
+        'Authorization': 'Basic ' + Buffer.from(ODOO_USER + ':' + ODOO_API_KEY).toString('base64')
       },
       body: JSON.stringify({
-        jsonrpc: '2.0', method: 'call', id: 2,
+        jsonrpc: '2.0', method: 'call', id: 1,
         params: { model, method, args: args || [], kwargs: kwargs || {} }
       })
     });
