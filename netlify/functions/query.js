@@ -23,9 +23,7 @@ exports.handler = async function(event) {
           type: "url",
           url: "https://mcp.cloud.cdata.com/mcp",
           name: "cdata-mcp",
-          headers: {
-            "Authorization": "Bearer " + process.env.CDATA_TOKEN
-          }
+          authorization_token: "Basic " + Buffer.from("ralph.lewis@fencepoint.com:" + process.env.CDATA_TOKEN).toString("base64")
         }]
       })
     });
