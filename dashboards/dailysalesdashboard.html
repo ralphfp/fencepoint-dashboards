@@ -7,57 +7,20 @@
   <style>
     :root { color-scheme: light; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      font-family: 'Segoe UI', Arial, sans-serif;
-      background: #f0f0f0;
-      min-height: 100vh;
-      padding: 14px;
-    }
-
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f0f0; min-height: 100vh; padding: 14px; }
     .header { text-align: center; margin-bottom: 16px; }
     .header h1 { font-size: 1.2rem; font-weight: 700; color: #222; letter-spacing: 0.02em; }
     .header .date-line { font-size: 0.78rem; color: #666; margin-top: 3px; }
-
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 8px;
-      max-width: 900px;
-      margin: 0 auto;
-    }
-
-    .dial-card {
-      background: #fff;
-      border-radius: 10px;
-      padding: 12px 8px 8px;
-      text-align: center;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.09);
-    }
-    .dial-title {
-      font-size: 0.78rem; font-weight: 700; color: #555;
-      letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 2px;
-    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; max-width: 900px; margin: 0 auto; }
+    .dial-card { background: #fff; border-radius: 10px; padding: 12px 8px 8px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.09); }
+    .dial-title { font-size: 0.78rem; font-weight: 700; color: #555; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 2px; }
     .dial-svg-wrap { width: 100%; }
-
-    .card-footer {
-      background: #E8500A; border-radius: 10px; padding: 18px 12px;
-      color: #fff; display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.09);
-    }
+    .card-footer { background: #E8500A; border-radius: 10px; padding: 18px 12px; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.09); }
     .footer-label { font-size: 0.78rem; font-weight: 700; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.06em; }
     .footer-value { font-size: 2.2rem; font-weight: 800; line-height: 1.1; margin-top: 6px; }
-
-    .refresh-btn {
-      display: block; margin: 12px auto 0;
-      background: #E8500A; color: #fff; border: none;
-      border-radius: 6px; padding: 9px 32px;
-      font-size: 0.9rem; font-weight: 700; cursor: pointer; letter-spacing: 0.02em;
-    }
+    .refresh-btn { display: block; margin: 12px auto 0; background: #E8500A; color: #fff; border: none; border-radius: 6px; padding: 9px 32px; font-size: 0.9rem; font-weight: 700; cursor: pointer; letter-spacing: 0.02em; }
     .refresh-btn:hover { background: #c94008; }
     .refresh-btn:disabled { opacity: 0.55; cursor: default; }
-
     .status-bar { text-align: center; font-size: 0.7rem; color: #888; margin-top: 8px; }
     .status-bar.error { color: #c0392b; }
   </style>
@@ -73,11 +36,9 @@
     <div class="dial-card"><div class="dial-title">Sales Today</div><div class="dial-svg-wrap" id="dw-st"></div></div>
     <div class="dial-card"><div class="dial-title">Sales MTD</div><div class="dial-svg-wrap" id="dw-sm"></div></div>
     <div class="dial-card"><div class="dial-title">Sales Invoiced MTD</div><div class="dial-svg-wrap" id="dw-si"></div></div>
-
     <div class="dial-card"><div class="dial-title">GP Today</div><div class="dial-svg-wrap" id="dw-gt"></div></div>
     <div class="dial-card"><div class="dial-title">GP MTD</div><div class="dial-svg-wrap" id="dw-gm"></div></div>
     <div class="dial-card"><div class="dial-title">GP Invoiced MTD</div><div class="dial-svg-wrap" id="dw-gi"></div></div>
-
     <div class="card-footer">
       <span class="footer-label">GP% Today</span>
       <span class="footer-value" id="gppct-today">—</span>
@@ -99,28 +60,23 @@
     const MONTHLY_SALES_TARGET = 312500;
     const MONTHLY_GP_TARGET    = 100000;
 
-    const R  = 74;
-    const CX = 100;
-    const CY = 92;
-    const SW = 15;
+    const R = 74, CX = 100, CY = 92, SW = 15;
 
     function buildDial(pct, color, actualText, targetText) {
-      const clamped  = Math.min(0.9999, Math.max(0.0001, pct));
+      const clamped = Math.min(0.9999, Math.max(0.0001, pct));
       const arcColor = pct >= 1.0 ? '#27ae60' : color;
-      var trackPath = 'M ' + (CX - R) + ' ' + CY + ' A ' + R + ' ' + R + ' 0 0 1 ' + (CX + R) + ' ' + CY;
-      var theta    = Math.PI * (1 - clamped);
-      var ex       = (CX + R * Math.cos(theta)).toFixed(3);
-      var ey       = (CY - R * Math.sin(theta)).toFixed(3);
-      var valuePath = 'M ' + (CX - R) + ' ' + CY + ' A ' + R + ' ' + R + ' 0 0 1 ' + ex + ' ' + ey;
+      var trackPath = 'M '+(CX-R)+' '+CY+' A '+R+' '+R+' 0 0 1 '+(CX+R)+' '+CY;
+      var theta = Math.PI * (1 - clamped);
+      var ex = (CX + R * Math.cos(theta)).toFixed(3);
+      var ey = (CY - R * Math.sin(theta)).toFixed(3);
+      var valuePath = 'M '+(CX-R)+' '+CY+' A '+R+' '+R+' 0 0 1 '+ex+' '+ey;
       var pctLabel = Math.round(Math.min(1, pct) * 100) + '% of target';
       var svg = '<svg viewBox="0 0 200 118" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;">';
-      svg += '<path d="' + trackPath + '" fill="none" stroke="#e5e5e5" stroke-width="' + SW + '" stroke-linecap="round"/>';
-      if (pct > 0.001) {
-        svg += '<path d="' + valuePath + '" fill="none" stroke="' + arcColor + '" stroke-width="' + SW + '" stroke-linecap="round"/>';
-      }
-      svg += '<text x="' + CX + '" y="70" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="800" fill="#1a1a1a">' + actualText + '</text>';
-      svg += '<text x="' + CX + '" y="83" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="11" fill="#aaa">TARGET: ' + targetText + '</text>';
-      svg += '<text x="' + CX + '" y="110" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="11" font-weight="700" fill="#888">' + pctLabel + '</text>';
+      svg += '<path d="'+trackPath+'" fill="none" stroke="#e5e5e5" stroke-width="'+SW+'" stroke-linecap="round"/>';
+      if (pct > 0.001) svg += '<path d="'+valuePath+'" fill="none" stroke="'+arcColor+'" stroke-width="'+SW+'" stroke-linecap="round"/>';
+      svg += '<text x="'+CX+'" y="70" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="800" fill="#1a1a1a">'+actualText+'</text>';
+      svg += '<text x="'+CX+'" y="83" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="11" fill="#aaa">TARGET: '+targetText+'</text>';
+      svg += '<text x="'+CX+'" y="110" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="11" font-weight="700" fill="#888">'+pctLabel+'</text>';
       svg += '</svg>';
       return svg;
     }
@@ -131,36 +87,15 @@
       if (el) el.innerHTML = buildDial(pct, color, fmt(actual), fmt(target));
     }
     function initDials() {
-      ['dw-st','dw-sm','dw-si'].forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) el.innerHTML = buildDial(0.001, '#E8500A', '...', '...');
-      });
-      ['dw-gt','dw-gm','dw-gi'].forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) el.innerHTML = buildDial(0.001, '#A0A0A0', '...', '...');
-      });
+      ['dw-st','dw-sm','dw-si'].forEach(id => { var el = document.getElementById(id); if (el) el.innerHTML = buildDial(0.001, '#E8500A', '...', '...'); });
+      ['dw-gt','dw-gm','dw-gi'].forEach(id => { var el = document.getElementById(id); if (el) el.innerHTML = buildDial(0.001, '#A0A0A0', '...', '...'); });
     }
 
     function pad(n) { return String(n).padStart(2, '0'); }
-    function todayStr() {
-      var d = new Date();
-      return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
-    }
-    function tomorrowStr() {
-      var d = new Date(); d.setDate(d.getDate() + 1);
-      return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
-    }
-    function monthStartStr() {
-      var d = new Date();
-      return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-01';
-    }
+    function todayStr() { var d = new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+    function monthStartStr() { var d = new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-01'; }
 
-    var UK_BANK_HOLIDAYS = new Set([
-      '2025-01-01','2025-04-18','2025-04-21','2025-05-05','2025-05-26',
-      '2025-08-25','2025-12-25','2025-12-26',
-      '2026-01-01','2026-04-03','2026-04-06','2026-05-04','2026-05-25',
-      '2026-08-31','2026-12-25','2026-12-28'
-    ]);
+    var UK_BANK_HOLIDAYS = new Set(['2025-01-01','2025-04-18','2025-04-21','2025-05-05','2025-05-26','2025-08-25','2025-12-25','2025-12-26','2026-01-01','2026-04-03','2026-04-06','2026-05-04','2026-05-25','2026-08-31','2026-12-25','2026-12-28']);
     var WORKING_DAY_OVERRIDES = { '2026-05': 20 };
 
     function workingDaysInMonth() {
@@ -170,7 +105,7 @@
       var days = new Date(year, month + 1, 0).getDate(), count = 0;
       for (var i = 1; i <= days; i++) {
         var dt = new Date(year, month, i), dow = dt.getDay();
-        var iso = year + '-' + pad(month+1) + '-' + pad(i);
+        var iso = year+'-'+pad(month+1)+'-'+pad(i);
         if (dow !== 0 && dow !== 6 && !UK_BANK_HOLIDAYS.has(iso)) count++;
       }
       return count;
@@ -184,31 +119,25 @@
       if (!sales || sales === 0) return '—';
       return Math.round((gp / sales) * 100) + '%';
     }
-    function set(id, val) {
-      var el = document.getElementById(id);
-      if (el) el.textContent = val;
-    }
+    function set(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
 
-    async function sql(query) {
-      const response = await fetch("/.netlify/functions/query", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query })
+    async function odoo(model, method, args, kwargs) {
+      const res = await fetch('/.netlify/functions/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, method, args: args || [], kwargs: kwargs || {} })
       });
-      const parsed = await response.json();
-      if (!response.ok || parsed.debug || parsed.error) {
-        throw new Error("Query error " + response.status + ": " + JSON.stringify(parsed));
-      }
-      return parsed.results[0].rows;
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(JSON.stringify(data.error || data));
+      return data.result;
     }
 
     async function load() {
       var today      = todayStr();
-      var tomorrow   = tomorrowStr();
       var monthStart = monthStartStr();
       var wDays      = workingDaysInMonth();
       var dailySales = MONTHLY_SALES_TARGET / wDays;
-      var dailyGP    = MONTHLY_GP_TARGET    / wDays;
+      var dailyGP    = MONTHLY_GP_TARGET / wDays;
 
       var now = new Date();
       document.getElementById('date-line').textContent =
@@ -219,29 +148,39 @@
 
       var status = document.getElementById('status-bar');
       status.className = 'status-bar';
+
       try {
+        // ── Orders MTD (confirmed sales orders) ─────────────────────────
         status.textContent = 'Loading orders...';
-        var orderRows = await sql(
-          'SELECT so.[date_order], ' +
-          'SUM(sol.[price_subtotal]) as rev, ' +
-          'SUM(sol.[purchase_price] * sol.[product_uom_qty]) as cost ' +
-          'FROM [User].[Odoo].[sale_order_line] sol ' +
-          'INNER JOIN [User].[Odoo].[sale_order] so ON sol.[order_id] = so.[id] ' +
-          "WHERE so.[state] = 'sale' " +
-          "AND so.[date_order] >= '" + monthStart + "' AND so.[date_order] < '" + tomorrow + "' " +
-          'GROUP BY so.[date_order]'
+
+        var orderLines = await odoo('sale.order.line', 'search_read',
+          [[['order_id.state','=','sale'],
+            ['order_id.date_order','>=', monthStart + ' 00:00:00'],
+            ['order_id.date_order','<=', today + ' 23:59:59']]],
+          { fields: ['order_id', 'price_subtotal', 'purchase_price', 'product_uom_qty', 'order_id'] }
         );
 
+        // Get order dates
+        var orderIds = [...new Set(orderLines.map(l => l.order_id[0]))];
+        var orders = await odoo('sale.order', 'search_read',
+          [[['id','in', orderIds]]],
+          { fields: ['id', 'date_order'] }
+        );
+        var orderDateMap = {};
+        orders.forEach(o => { orderDateMap[o.id] = o.date_order.split(' ')[0]; });
+
         var salesToday = 0, costToday = 0, salesMtd = 0, costMtd = 0;
-        for (var i = 0; i < orderRows.length; i++) {
-          var row = orderRows[i];
-          var rowDate = row[0] ? String(row[0]).split('T')[0] : '';
-          var rev  = row[1] || 0, cost = row[2] || 0;
+        orderLines.forEach(function(line) {
+          var orderId = line.order_id[0];
+          var date = orderDateMap[orderId] || '';
+          var rev  = line.price_subtotal || 0;
+          var cost = (line.purchase_price || 0) * (line.product_uom_qty || 0);
           salesMtd += rev; costMtd += cost;
-          if (rowDate === today) { salesToday += rev; costToday += cost; }
-        }
+          if (date === today) { salesToday += rev; costToday += cost; }
+        });
+
         var gpToday = salesToday - costToday;
-        var gpMtd   = salesMtd   - costMtd;
+        var gpMtd   = salesMtd - costMtd;
 
         setDial('dw-st', '#E8500A', salesToday, dailySales);
         setDial('dw-sm', '#E8500A', salesMtd,   MONTHLY_SALES_TARGET);
@@ -250,30 +189,35 @@
         set('gppct-today', fmtPct(salesToday, gpToday));
         set('gppct-mtd',   fmtPct(salesMtd,   gpMtd));
 
-        status.textContent = 'Loading invoice figures...';
-        var invRows = await sql(
-          "SELECT 'inv_sales' as metric, SUM(CASE WHEN [move_type]='out_invoice' THEN [amount_untaxed] " +
-          "WHEN [move_type]='out_refund' THEN -[amount_untaxed] ELSE 0 END) as val " +
-          'FROM [User].[Odoo].[account_move] ' +
-          "WHERE [move_type] IN ('out_invoice','out_refund') AND [state] = 'posted' " +
-          "AND ([move_type] = 'out_refund' OR ([invoice_origin] IS NOT NULL AND [invoice_origin] <> '')) " +
-          "AND [invoice_date] >= '" + monthStart + "' AND [invoice_date] < '" + tomorrow + "' " +
-          'UNION ALL ' +
-          "SELECT 'gp_inv', SUM(so.[margin]) " +
-          'FROM [User].[Odoo].[sale_order] so ' +
-          'WHERE so.[name] IN ( ' +
-          '  SELECT [invoice_origin] FROM [User].[Odoo].[account_move] ' +
-          "  WHERE [move_type] = 'out_invoice' AND [state] = 'posted' " +
-          "  AND [invoice_date] >= '" + monthStart + "' AND [invoice_date] < '" + tomorrow + "' " +
-          '  AND [invoice_origin] IS NOT NULL ' +
-          ')'
+        // ── Invoices MTD ─────────────────────────────────────────────────
+        status.textContent = 'Loading invoices...';
+
+        var invoices = await odoo('account.move', 'search_read',
+          [[['move_type','in',['out_invoice','out_refund']],
+            ['state','=','posted'],
+            ['invoice_date','>=', monthStart],
+            ['invoice_date','<=', today]]],
+          { fields: ['move_type', 'amount_untaxed', 'invoice_origin'] }
         );
 
-        var salesInv = 0, gpInv = 0;
-        for (var j = 0; j < invRows.length; j++) {
-          if (invRows[j][0] === 'inv_sales') salesInv = invRows[j][1] || 0;
-          if (invRows[j][0] === 'gp_inv')    gpInv    = invRows[j][1] || 0;
+        var salesInv = 0;
+        var invoiceOrigins = [];
+        invoices.forEach(function(inv) {
+          var amt = inv.amount_untaxed || 0;
+          if (inv.move_type === 'out_invoice') { salesInv += amt; if (inv.invoice_origin) invoiceOrigins.push(inv.invoice_origin); }
+          else if (inv.move_type === 'out_refund') { salesInv -= amt; }
+        });
+
+        // Get GP from linked sale orders
+        var gpInv = 0;
+        if (invoiceOrigins.length > 0) {
+          var linkedOrders = await odoo('sale.order', 'search_read',
+            [[['name','in', invoiceOrigins]]],
+            { fields: ['name', 'margin'] }
+          );
+          linkedOrders.forEach(o => { gpInv += (o.margin || 0); });
         }
+
         setDial('dw-si', '#E8500A', salesInv, MONTHLY_SALES_TARGET);
         setDial('dw-gi', '#A0A0A0', gpInv,    MONTHLY_GP_TARGET);
         set('gppct-inv', fmtPct(salesInv, gpInv));
