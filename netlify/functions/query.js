@@ -23,7 +23,9 @@ exports.handler = async function(event) {
           type: "url",
           url: "https://mcp.cloud.cdata.com/mcp",
           name: "cdata-mcp",
-          authorization_token: process.env.CDATA_TOKEN
+          headers: {
+            "Authorization": "Bearer " + process.env.CDATA_TOKEN
+          }
         }]
       })
     });
