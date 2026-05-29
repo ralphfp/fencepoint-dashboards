@@ -4,63 +4,61 @@ exports.handler = async function(event) {
   }
 
   try {
-    const { query } = JSON.parse(event.body);
+    const body = JSON.parse(event.body);
+    const { model, method, args, kwargs } = body;
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "mcp-client-2025-04-04"
-      },
+    const ODOO_URL     = process.env.ODOO_URL;
+    const ODOO_DB      = process.env.ODOO_DB;
+    const ODOO_USER    = process.env.ODOO_USER;
+    const ODOO_API_KEY = process.env.ODOO_API_KEY;
+
+    // Step 1: authenticate
+    const authRes = await fetch(ODOO_URL + '/web/session/authenticate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 2000,
-        system: 'You are a data query assistant. When given a SQL query, execute it using the queryData tool and return ONLY a raw JSON object with this exact structure: {"results":[{"rows":[[val1,val2,...],...]}]}. No explanation, no markdown, no code fences.',
-        messages: [{ role: "user", content: "Execute this SQL and return results as JSON: " + query }],
-        mcp_servers: [{
-          type: "url",
-          url: "https://mcp.cloud.cdata.com/mcp",
-          name: "cdata-mcp",
-          authorization_token: process.env.CDATA_TOKEN
-        }]
+        jsonrpc: '2.0', method: 'call', id: 1,
+        params: { db: ODOO_DB, login: ODOO_USER, password: ODOO_API_KEY }
       })
     });
 
-    const data = await response.json();
-
-    // Return full API response for debugging if something goes wrong
-    if (!response.ok || !data.content) {
-      return {
-        statusCode: 502,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ debug: data })
-      };
+    const authData = await authRes.json();
+    const uid = authData.result && authData.result.uid;
+    if (!uid) {
+      return { statusCode: 502, body: JSON.stringify({ error: 'Odoo auth failed', detail: authData }) };
     }
 
-    const textBlock = data.content.find(b => b.type === "text");
-    if (!textBlock) {
-      return {
-        statusCode: 502,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ debug: data, error: "No text block found" })
-      };
-    }
+    const cookie = authRes.headers.get('set-cookie') || '';
 
-    const cleaned = textBlock.text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    // Step 2: call model method
+    const rpcRes = await fetch(ODOO_URL + '/web/dataset/call_kw', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': cookie
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0', method: 'call', id: 2,
+        params: { model, method, args: args || [], kwargs: kwargs || {} }
+      })
+    });
+
+    const rpcData = await rpcRes.json();
+
+    if (rpcData.error) {
+      return { statusCode: 502, body: JSON.stringify({ error: rpcData.error }) };
+    }
 
     return {
       statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(parsed)
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ result: rpcData.result })
     };
 
   } catch(err) {
     return {
       statusCode: 500,
-      headers: { "Content-Type": "application/json" },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ error: err.message })
     };
   }
