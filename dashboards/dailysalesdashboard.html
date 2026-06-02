@@ -23,6 +23,16 @@
     .refresh-btn:disabled { opacity: 0.55; cursor: default; }
     .status-bar { text-align: center; font-size: 0.7rem; color: #888; margin-top: 8px; }
     .status-bar.error { color: #c0392b; }
+    .pipeline-section { max-width: 900px; margin: 14px auto 0; }
+    .pipeline-heading { font-size: 0.72rem; font-weight: 700; color: #888; letter-spacing: 0.10em; text-transform: uppercase; margin-bottom: 7px; padding-left: 2px; }
+    .pipeline-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+    .pipeline-card { background: #fff; border-radius: 10px; padding: 14px 10px 12px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.09); border-top: 3px solid #A0A0A0; }
+    .pipeline-card.current-month { border-top-color: #E8500A; }
+    .pipeline-month { font-size: 0.78rem; font-weight: 700; color: #555; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 8px; }
+    .pipeline-month.current { color: #E8500A; }
+    .pipeline-gp { font-size: 1.45rem; font-weight: 800; color: #1a1a1a; line-height: 1.1; }
+    .pipeline-count { font-size: 0.70rem; color: #aaa; margin-top: 5px; }
+    .pipeline-label { font-size: 0.65rem; font-weight: 700; color: #aaa; letter-spacing: 0.05em; text-transform: uppercase; margin-top: 2px; }
   </style>
 </head>
 <body>
@@ -52,6 +62,11 @@
       <span class="footer-label">GP% Invoiced MTD</span>
       <span class="footer-value" id="gppct-inv">—</span>
     </div>
+  </div>
+
+  <div class="pipeline-section">
+    <div class="pipeline-heading">GP Pipeline — Confirmed Orders by Delivery Month</div>
+    <div class="pipeline-grid" id="pipeline-grid"></div>
   </div>
 
   <button class="refresh-btn" id="refresh-btn" onclick="handleRefresh()">&#8635; Load Data</button>
@@ -88,53 +103,49 @@
       if (el) el.innerHTML = buildDial(pct, color, fmt(actual), fmt(target));
     }
     function initDials() {
-      ['dw-st','dw-sm','dw-si'].forEach(id => { var el = document.getElementById(id); if (el) el.innerHTML = buildDial(0.001, '#E8500A', '...', '...'); });
-      ['dw-gt','dw-gm','dw-gi'].forEach(id => { var el = document.getElementById(id); if (el) el.innerHTML = buildDial(0.001, '#A0A0A0', '...', '...'); });
+      ['dw-st','dw-sm','dw-si'].forEach(id => { var el=document.getElementById(id); if(el) el.innerHTML=buildDial(0.001,'#E8500A','...','...'); });
+      ['dw-gt','dw-gm','dw-gi'].forEach(id => { var el=document.getElementById(id); if(el) el.innerHTML=buildDial(0.001,'#A0A0A0','...','...'); });
     }
 
-    function pad(n) { return String(n).padStart(2, '0'); }
-    function todayStr() { var d = new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
-    function monthStartStr() { var d = new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-01'; }
+    function pad(n) { return String(n).padStart(2,'0'); }
+    function todayStr() { var d=new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+    function tomorrowStr() { var d=new Date(); var t=new Date(d.getFullYear(),d.getMonth(),d.getDate()+1); return t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(t.getDate()); }
+    function monthStartStr() { var d=new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-01'; }
 
     var UK_BANK_HOLIDAYS = new Set(['2025-01-01','2025-04-18','2025-04-21','2025-05-05','2025-05-26','2025-08-25','2025-12-25','2025-12-26','2026-01-01','2026-04-03','2026-04-06','2026-05-04','2026-05-25','2026-08-31','2026-12-25','2026-12-28']);
-    var WORKING_DAY_OVERRIDES = { '2026-05': 20 };
+    var WORKING_DAY_OVERRIDES = { '2026-06': 22 };
 
     function workingDaysInMonth() {
-      var d = new Date(), year = d.getFullYear(), month = d.getMonth();
-      var key = year + '-' + pad(month + 1);
-      if (WORKING_DAY_OVERRIDES[key] !== undefined) return WORKING_DAY_OVERRIDES[key];
-      var days = new Date(year, month + 1, 0).getDate(), count = 0;
-      for (var i = 1; i <= days; i++) {
-        var dt = new Date(year, month, i), dow = dt.getDay();
-        var iso = year+'-'+pad(month+1)+'-'+pad(i);
-        if (dow !== 0 && dow !== 6 && !UK_BANK_HOLIDAYS.has(iso)) count++;
+      var d=new Date(), year=d.getFullYear(), month=d.getMonth();
+      var key=year+'-'+pad(month+1);
+      if (WORKING_DAY_OVERRIDES[key]!==undefined) return WORKING_DAY_OVERRIDES[key];
+      var days=new Date(year,month+1,0).getDate(), count=0;
+      for (var i=1;i<=days;i++) {
+        var dt=new Date(year,month,i), dow=dt.getDay();
+        var iso=year+'-'+pad(month+1)+'-'+pad(i);
+        if (dow!==0&&dow!==6&&!UK_BANK_HOLIDAYS.has(iso)) count++;
       }
       return count;
     }
 
-    function fmt(n) {
-      if (n === null || n === undefined || isNaN(n)) return '—';
-      return '£' + Math.round(n).toLocaleString('en-GB');
-    }
-    function fmtPct(sales, gp) {
-      if (!sales || sales === 0) return '—';
-      return Math.round((gp / sales) * 100) + '%';
-    }
-    function set(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
+    function fmt(n) { if(n===null||n===undefined||isNaN(n)) return '—'; return '£'+Math.round(n).toLocaleString('en-GB'); }
+    function fmtPct(sales,gp) { if(!sales||sales===0) return '—'; return Math.round((gp/sales)*100)+'%'; }
+    function set(id,val) { var el=document.getElementById(id); if(el) el.textContent=val; }
 
     async function odoo(model, method, args, kwargs) {
       const res = await fetch('/.netlify/functions/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, method, args: args || [], kwargs: kwargs || {} })
+        body: JSON.stringify({ model, method, args: args||[], kwargs: kwargs||{} })
       });
       const data = await res.json();
-      if (!res.ok || data.error) throw new Error(JSON.stringify(data.error || data));
+      if (!res.ok || data.error) throw new Error(JSON.stringify(data.error||data));
       return data.result;
     }
 
     async function load() {
       var today      = todayStr();
+      var tomorrow   = tomorrowStr();
       var monthStart = monthStartStr();
       var wDays      = workingDaysInMonth();
       var dailySales = MONTHLY_SALES_TARGET / wDays;
@@ -151,92 +162,123 @@
       status.className = 'status-bar';
 
       try {
-        // ── Orders MTD (confirmed sales orders) ─────────────────────────
+        // Q1: Order lines MTD
         status.textContent = 'Loading orders...';
-
         var orderLines = await odoo('sale.order.line', 'search_read',
           [[['order_id.state','=','sale'],
-            ['order_id.date_order','>=', monthStart + ' 00:00:00'],
-            ['order_id.date_order','<=', today + ' 23:59:59']]],
-          { fields: ['order_id', 'price_subtotal', 'purchase_price', 'product_uom_qty', 'order_id'] }
+            ['order_id.date_order','>=', monthStart+' 00:00:00'],
+            ['order_id.date_order','<',  tomorrow+' 00:00:00']]],
+          { fields: ['order_id','price_subtotal','purchase_price','product_uom_qty'], limit: 5000 }
         );
-
-        // Get order dates
-        var orderIds = [...new Set(orderLines.map(l => l.order_id[0]))];
-        var orders = await odoo('sale.order', 'search_read',
-          [[['id','in', orderIds]]],
-          { fields: ['id', 'date_order'] }
-        );
+        var orderIds = [...new Set(orderLines.map(l => Array.isArray(l.order_id)?l.order_id[0]:l.order_id))];
+        var orders = orderIds.length > 0 ? await odoo('sale.order','search_read',
+          [[['id','in',orderIds]]],
+          { fields: ['id','date_order'], limit: 5000 }) : [];
         var orderDateMap = {};
-        orders.forEach(o => { orderDateMap[o.id] = o.date_order.split(' ')[0]; });
+        orders.forEach(o => { orderDateMap[o.id] = (o.date_order||'').split(' ')[0]; });
 
-        var salesToday = 0, costToday = 0, salesMtd = 0, costMtd = 0;
+        var salesToday=0, costToday=0, salesMtd=0, costMtd=0;
         orderLines.forEach(function(line) {
-          var orderId = line.order_id[0];
-          var date = orderDateMap[orderId] || '';
-          var rev  = line.price_subtotal || 0;
-          var cost = (line.purchase_price || 0) * (line.product_uom_qty || 0);
-          salesMtd += rev; costMtd += cost;
-          if (date === today) { salesToday += rev; costToday += cost; }
+          var oid = Array.isArray(line.order_id)?line.order_id[0]:line.order_id;
+          var date = orderDateMap[oid]||'';
+          var rev = line.price_subtotal||0;
+          var cost = (line.purchase_price||0)*(line.product_uom_qty||0);
+          salesMtd+=rev; costMtd+=cost;
+          if (date===today) { salesToday+=rev; costToday+=cost; }
         });
+        var gpToday=salesToday-costToday, gpMtd=salesMtd-costMtd;
 
-        var gpToday = salesToday - costToday;
-        var gpMtd   = salesMtd - costMtd;
+        setDial('dw-st','#E8500A',salesToday,dailySales);
+        setDial('dw-sm','#E8500A',salesMtd,MONTHLY_SALES_TARGET);
+        setDial('dw-gt','#A0A0A0',gpToday,dailyGP);
+        setDial('dw-gm','#A0A0A0',gpMtd,MONTHLY_GP_TARGET);
+        set('gppct-today',fmtPct(salesToday,gpToday));
+        set('gppct-mtd',fmtPct(salesMtd,gpMtd));
 
-        setDial('dw-st', '#E8500A', salesToday, dailySales);
-        setDial('dw-sm', '#E8500A', salesMtd,   MONTHLY_SALES_TARGET);
-        setDial('dw-gt', '#A0A0A0', gpToday,    dailyGP);
-        setDial('dw-gm', '#A0A0A0', gpMtd,      MONTHLY_GP_TARGET);
-        set('gppct-today', fmtPct(salesToday, gpToday));
-        set('gppct-mtd',   fmtPct(salesMtd,   gpMtd));
-
-        // ── Invoices MTD ─────────────────────────────────────────────────
+        // Q2: Invoices MTD
         status.textContent = 'Loading invoices...';
-
-        var invoices = await odoo('account.move', 'search_read',
+        var invoices = await odoo('account.move','search_read',
           [[['move_type','in',['out_invoice','out_refund']],
             ['state','=','posted'],
-            ['invoice_date','>=', monthStart],
-            ['invoice_date','<=', today]]],
-          { fields: ['move_type', 'amount_untaxed', 'invoice_origin'] }
+            ['invoice_date','>=',monthStart],
+            ['invoice_date','<',tomorrow]]],
+          { fields: ['move_type','amount_untaxed','invoice_origin'], limit: 2000 }
+        );
+        var salesInv=0, invoiceOrigins=[];
+        invoices.forEach(function(inv) {
+          var amt=inv.amount_untaxed||0;
+          if (inv.move_type==='out_invoice') { salesInv+=amt; if(inv.invoice_origin) invoiceOrigins.push(inv.invoice_origin); }
+          else if (inv.move_type==='out_refund') salesInv-=amt;
+        });
+        var gpInv=0;
+        if (invoiceOrigins.length>0) {
+          var linkedOrders = await odoo('sale.order','search_read',
+            [[['name','in',invoiceOrigins]]],
+            { fields: ['name','margin'], limit: 2000 });
+          linkedOrders.forEach(o => { gpInv+=(o.margin||0); });
+        }
+        setDial('dw-si','#E8500A',salesInv,MONTHLY_SALES_TARGET);
+        setDial('dw-gi','#A0A0A0',gpInv,MONTHLY_GP_TARGET);
+        set('gppct-inv',fmtPct(salesInv,gpInv));
+
+        // Q3: Pipeline — confirmed orders not yet fully delivered, grouped by commitment_date
+        status.textContent = 'Loading pipeline...';
+        var pipelineOrders = await odoo('sale.order','search_read',
+          [[['state','=','sale'],
+            ['delivery_status','in',['pending','waiting','ready']],
+            ['commitment_date','>=',monthStart+' 00:00:00']]],
+          { fields: ['id','commitment_date','margin'], limit: 2000 }
         );
 
-        var salesInv = 0;
-        var invoiceOrigins = [];
-        invoices.forEach(function(inv) {
-          var amt = inv.amount_untaxed || 0;
-          if (inv.move_type === 'out_invoice') { salesInv += amt; if (inv.invoice_origin) invoiceOrigins.push(inv.invoice_origin); }
-          else if (inv.move_type === 'out_refund') { salesInv -= amt; }
+        var monthMap = {};
+        var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        pipelineOrders.forEach(function(o) {
+          if (!o.commitment_date) return;
+          var mKey = o.commitment_date.slice(0,7);
+          if (!monthMap[mKey]) monthMap[mKey] = { gp:0, cnt:0 };
+          monthMap[mKey].gp  += (o.margin||0);
+          monthMap[mKey].cnt += 1;
         });
 
-        // Get GP from linked sale orders
-        var gpInv = 0;
-        if (invoiceOrigins.length > 0) {
-          var linkedOrders = await odoo('sale.order', 'search_read',
-            [[['name','in', invoiceOrigins]]],
-            { fields: ['name', 'margin'] }
-          );
-          linkedOrders.forEach(o => { gpInv += (o.margin || 0); });
+        var pgrid = document.getElementById('pipeline-grid');
+        pgrid.innerHTML = '';
+        var sortedKeys = Object.keys(monthMap).sort();
+        var currentMKey = today.slice(0,7);
+
+        if (sortedKeys.length===0) {
+          pgrid.innerHTML = '<div style="color:#aaa;font-size:0.8rem;padding:10px;">No confirmed pipeline orders found.</div>';
+        } else {
+          sortedKeys.forEach(function(mk) {
+            var parts=mk.split('-');
+            var mo=parseInt(parts[1]);
+            var yr=parseInt(parts[0]);
+            var label=MONTH_NAMES[mo-1]+' '+yr;
+            var isCurrent=mk===currentMKey;
+            var card=document.createElement('div');
+            card.className='pipeline-card'+(isCurrent?' current-month':'');
+            card.innerHTML=
+              '<div class="pipeline-month'+(isCurrent?' current':'')+'">'+label+'</div>'+
+              '<div class="pipeline-gp">'+fmt(monthMap[mk].gp)+'</div>'+
+              '<div class="pipeline-count">'+monthMap[mk].cnt+' orders</div>'+
+              '<div class="pipeline-label">Confirmed GP</div>';
+            pgrid.appendChild(card);
+          });
         }
 
-        setDial('dw-si', '#E8500A', salesInv, MONTHLY_SALES_TARGET);
-        setDial('dw-gi', '#A0A0A0', gpInv,    MONTHLY_GP_TARGET);
-        set('gppct-inv', fmtPct(salesInv, gpInv));
-
-        status.textContent = 'Last updated: ' + now.toLocaleTimeString('en-GB');
+        status.textContent = 'Last updated: '+now.toLocaleTimeString('en-GB');
 
       } catch(err) {
         console.error(err);
         status.className = 'status-bar error';
-        status.textContent = 'Error: ' + (err.message || String(err));
+        status.textContent = 'Error: '+(err.message||String(err));
       }
     }
 
     async function handleRefresh() {
-      var btn = document.getElementById('refresh-btn');
-      btn.disabled = true; btn.textContent = '⏳ Loading…';
+      var btn=document.getElementById('refresh-btn');
+      btn.disabled=true; btn.textContent='⏳ Loading…';
       await load();
-      btn.disabled = false; btn.textContent = '↻ Refresh';
+      btn.disabled=false; btn.textContent='↻ Refresh';
     }
   </script>
 </body>
