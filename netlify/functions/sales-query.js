@@ -130,7 +130,7 @@ exports.handler = async function(event) {
 
     // Q3: Pipeline — confirmed orders not fully delivered, grouped by commitment_date
     const pipelineOrders = await odooCall(uid, 'sale.order', 'search_read',
-      [[['state','=','sale'],['delivery_status','in',['pending','waiting','ready']],
+      [[['state','=','sale'],['delivery_status','in',['pending','started']],
         ['commitment_date','>=',monthStart+' 00:00:00']]],
       { fields: ['commitment_date','margin'], limit: 2000 });
 
