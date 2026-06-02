@@ -132,16 +132,6 @@
     function fmtPct(sales,gp) { if(!sales||sales===0) return '—'; return Math.round((gp/sales)*100)+'%'; }
     function set(id,val) { var el=document.getElementById(id); if(el) el.textContent=val; }
 
-    async function odoo(model, method, args, kwargs) {
-      const res = await fetch('/.netlify/functions/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, method, args: args||[], kwargs: kwargs||{} })
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(JSON.stringify(data.error||data));
-      return data.result;
-    }
 
     async function load() {
       var today      = todayStr();
@@ -162,30 +152,18 @@
       status.className = 'status-bar';
 
       try {
-        // Q1: Order lines MTD
-        status.textContent = 'Loading orders...';
-        var orderLines = await odoo('sale.order.line', 'search_read',
-          [[['order_id.state','=','sale'],
-            ['order_id.date_order','>=', monthStart+' 00:00:00'],
-            ['order_id.date_order','<',  tomorrow+' 00:00:00']]],
-          { fields: ['order_id','price_subtotal','purchase_price','product_uom_qty'], limit: 5000 }
-        );
-        var orderIds = [...new Set(orderLines.map(l => Array.isArray(l.order_id)?l.order_id[0]:l.order_id))];
-        var orders = orderIds.length > 0 ? await odoo('sale.order','search_read',
-          [[['id','in',orderIds]]],
-          { fields: ['id','date_order'], limit: 5000 }) : [];
-        var orderDateMap = {};
-        orders.forEach(o => { orderDateMap[o.id] = (o.date_order||'').split(' ')[0]; });
-
-        var salesToday=0, costToday=0, salesMtd=0, costMtd=0;
-        orderLines.forEach(function(line) {
-          var oid = Array.isArray(line.order_id)?line.order_id[0]:line.order_id;
-          var date = orderDateMap[oid]||'';
-          var rev = line.price_subtotal||0;
-          var cost = (line.purchase_price||0)*(line.product_uom_qty||0);
-          salesMtd+=rev; costMtd+=cost;
-          if (date===today) { salesToday+=rev; costToday+=cost; }
+        status.textContent = 'Loading live data from Odoo…';
+        var res = await fetch('/.netlify/functions/sales-query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ monthStart: monthStart, today: today, tomorrow: tomorrow })
         });
+        if (!res.ok) throw new Error('Query failed: ' + await res.text());
+        var d = await res.json();
+        if (d.error) throw new Error(d.error);
+
+        var salesToday=d.orders.salesToday, costToday=d.orders.costToday;
+        var salesMtd=d.orders.salesMtd, costMtd=d.orders.costMtd;
         var gpToday=salesToday-costToday, gpMtd=salesMtd-costMtd;
 
         setDial('dw-st','#E8500A',salesToday,dailySales);
@@ -195,50 +173,12 @@
         set('gppct-today',fmtPct(salesToday,gpToday));
         set('gppct-mtd',fmtPct(salesMtd,gpMtd));
 
-        // Q2: Invoices MTD
-        status.textContent = 'Loading invoices...';
-        var invoices = await odoo('account.move','search_read',
-          [[['move_type','in',['out_invoice','out_refund']],
-            ['state','=','posted'],
-            ['invoice_date','>=',monthStart],
-            ['invoice_date','<',tomorrow]]],
-          { fields: ['move_type','amount_untaxed','invoice_origin'], limit: 2000 }
-        );
-        var salesInv=0, invoiceOrigins=[];
-        invoices.forEach(function(inv) {
-          var amt=inv.amount_untaxed||0;
-          if (inv.move_type==='out_invoice') { salesInv+=amt; if(inv.invoice_origin) invoiceOrigins.push(inv.invoice_origin); }
-          else if (inv.move_type==='out_refund') salesInv-=amt;
-        });
-        var gpInv=0;
-        if (invoiceOrigins.length>0) {
-          var linkedOrders = await odoo('sale.order','search_read',
-            [[['name','in',invoiceOrigins]]],
-            { fields: ['name','margin'], limit: 2000 });
-          linkedOrders.forEach(o => { gpInv+=(o.margin||0); });
-        }
-        setDial('dw-si','#E8500A',salesInv,MONTHLY_SALES_TARGET);
-        setDial('dw-gi','#A0A0A0',gpInv,MONTHLY_GP_TARGET);
-        set('gppct-inv',fmtPct(salesInv,gpInv));
+        setDial('dw-si','#E8500A',d.invoices.salesInv,MONTHLY_SALES_TARGET);
+        setDial('dw-gi','#A0A0A0',d.invoices.gpInv,MONTHLY_GP_TARGET);
+        set('gppct-inv',fmtPct(d.invoices.salesInv,d.invoices.gpInv));
 
-        // Q3: Pipeline — confirmed orders not yet fully delivered, grouped by commitment_date
-        status.textContent = 'Loading pipeline...';
-        var pipelineOrders = await odoo('sale.order','search_read',
-          [[['state','=','sale'],
-            ['delivery_status','in',['pending','waiting','ready']],
-            ['commitment_date','>=',monthStart+' 00:00:00']]],
-          { fields: ['id','commitment_date','margin'], limit: 2000 }
-        );
-
-        var monthMap = {};
+        var monthMap = d.pipeline;
         var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        pipelineOrders.forEach(function(o) {
-          if (!o.commitment_date) return;
-          var mKey = o.commitment_date.slice(0,7);
-          if (!monthMap[mKey]) monthMap[mKey] = { gp:0, cnt:0 };
-          monthMap[mKey].gp  += (o.margin||0);
-          monthMap[mKey].cnt += 1;
-        });
 
         var pgrid = document.getElementById('pipeline-grid');
         pgrid.innerHTML = '';
