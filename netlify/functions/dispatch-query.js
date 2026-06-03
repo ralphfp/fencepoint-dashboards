@@ -82,10 +82,11 @@ exports.handler = async function(event) {
         ['state', '=', 'sale'],
         ['commitment_date', '>=', today + ' 00:00:00'],
         ['delivery_status', 'in', ['pending', 'started']],
+        ['tag_ids', 'in', [20]],
       ]],
       {
         fields: ['id','name','partner_id','commitment_date','delivery_status',
-                 'user_id','amount_untaxed','margin','client_order_ref'],
+                 'user_id','amount_untaxed','margin','client_order_ref','tag_ids'],
         order: 'commitment_date asc',
         limit: 500
       }
@@ -134,6 +135,7 @@ exports.handler = async function(event) {
       name: o.name,
       customer: Array.isArray(o.partner_id) ? o.partner_id[1] : '',
       ref: o.client_order_ref || '',
+      tag_ids: Array.isArray(o.tag_ids) ? o.tag_ids : [],
       commitment_date: o.commitment_date || '',
       delivery_status: o.delivery_status || '',
       salesperson: Array.isArray(o.user_id) ? o.user_id[1] : '',
