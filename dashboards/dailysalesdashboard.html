@@ -222,6 +222,7 @@
         }
 
         status.textContent = 'Last updated: '+now.toLocaleTimeString('en-GB');
+        countdown = REFRESH_INTERVAL;
 
       } catch(err) {
         console.error(err);
@@ -233,9 +234,58 @@
     async function handleRefresh() {
       var btn=document.getElementById('refresh-btn');
       btn.disabled=true; btn.textContent='⏳ Loading…';
+      resetCountdown();
       await load();
       btn.disabled=false; btn.textContent='↻ Refresh';
     }
+
+    // ── Auto-refresh every 5 minutes ────────────────────────────────────────
+    var REFRESH_INTERVAL = 5 * 60; // seconds
+    var countdown = REFRESH_INTERVAL;
+    var countdownTimer = null;
+    var autoRefreshTimer = null;
+
+    function resetCountdown() {
+      countdown = REFRESH_INTERVAL;
+    }
+
+    function startAutoRefresh() {
+      // Clear any existing timers
+      if (countdownTimer)   clearInterval(countdownTimer);
+      if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+
+      countdown = REFRESH_INTERVAL;
+
+      // Update countdown display every second
+      countdownTimer = setInterval(function() {
+        countdown--;
+        var mins = Math.floor(countdown / 60);
+        var secs = String(countdown % 60).padStart(2,'0');
+        var bar = document.getElementById('status-bar');
+        if (bar && !bar.classList.contains('error')) {
+          var lastUpdated = bar.textContent.split(' — ')[0];
+          bar.textContent = lastUpdated + ' — next refresh in ' + mins + ':' + secs;
+        }
+        if (countdown <= 0) countdown = REFRESH_INTERVAL;
+      }, 1000);
+
+      // Trigger a full reload every 5 minutes
+      autoRefreshTimer = setInterval(async function() {
+        var btn = document.getElementById('refresh-btn');
+        btn.disabled = true; btn.textContent = '⏳ Loading…';
+        resetCountdown();
+        await load();
+        btn.disabled = false; btn.textContent = '↻ Refresh';
+      }, REFRESH_INTERVAL * 1000);
+    }
+
+    // Kick off auto-refresh after first load
+    document.getElementById('refresh-btn').addEventListener('click', function() {}, false);
+
+    // Start the auto-refresh loop once the page is ready
+    window.addEventListener('load', function() {
+      startAutoRefresh();
+    });
   </script>
 </body>
 </html>
