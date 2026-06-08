@@ -561,6 +561,17 @@ function getMonthStart(today) { return today.slice(0,8)+"01"; }
 // ── Activity data comes bundled from sales-query ────────────────────────────────
 
 
+// ── Activity helpers ─────────────────────────────────────────────────────────
+function cleanNote(h) {
+  if (!h) return "";
+  var m = h.match(/Feedback:<\/div>\s*([\s\S]*?)(?=<\/div>|$)/i);
+  var text = m ? m[1] : h;
+  return text.replace(/<br\s*\/?>/gi," ").replace(/<[^>]+>/g,"")
+             .replace(/&nbsp;/g," ").replace(/&amp;/g,"&")
+             .replace(/&lt;/g,"<").replace(/&gt;/g,">")
+             .replace(/&quot;/g,'"').replace(/\s+/g," ").trim();
+}
+
 // ── Process activity data ─────────────────────────────────────────────────────
 function processActivity(raw) {
   var REP_SET = new Set(REPS);
