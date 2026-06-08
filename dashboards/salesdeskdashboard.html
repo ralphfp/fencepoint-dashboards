@@ -282,15 +282,15 @@ body {
         <div class="biz-lbl">Commercial Sales Today</div>
         <div class="biz-val" id="biz-comm">—</div>
       </div>
-      <div class="biz-card c-sales">
-        <div class="biz-lbl">Combined Sales MTD</div>
-        <div class="biz-val" id="biz-sales-mtd">—</div>
-        <div class="biz-sub" id="biz-sales-sub"></div>
+      <div class="biz-card c-timber">
+        <div class="biz-lbl">Timber Sales MTD</div>
+        <div class="biz-val" id="biz-timber-mtd">—</div>
+        <div class="biz-sub" id="biz-timber-mtd-sub"></div>
       </div>
-      <div class="biz-card c-gp">
-        <div class="biz-lbl">Combined GP Invoiced MTD</div>
-        <div class="biz-val" id="biz-gp-mtd">—</div>
-        <div class="biz-sub" id="biz-gp-sub"></div>
+      <div class="biz-card c-comm">
+        <div class="biz-lbl">Commercial Sales MTD</div>
+        <div class="biz-val" id="biz-comm-mtd">—</div>
+        <div class="biz-sub" id="biz-comm-mtd-sub"></div>
       </div>
     </div>
   </div>
@@ -689,12 +689,12 @@ async function load() {
 
     // ── Business performance bar (from activity bizData) ──
     var bizData = salesRes.bizData || {};
-    set("biz-timber",    fmt(bizData.timberToday  || 0));
-    set("biz-comm",      fmt(bizData.commToday    || 0));
-    set("biz-sales-mtd", fmt(salesMtd));
-    set("biz-gp-mtd",    fmt(salesRes.invoices.gpInv));
-    set("biz-sales-sub", elapsed+" of "+total+" working days");
-    set("biz-gp-sub",    "Invoiced & posted");
+    set("biz-timber",         fmt(bizData.timberToday || 0));
+    set("biz-comm",           fmt(bizData.commToday   || 0));
+    set("biz-timber-mtd",     fmt(bizData.timberMtd   || 0));
+    set("biz-comm-mtd",       fmt(bizData.commMtd     || 0));
+    set("biz-timber-mtd-sub", elapsed+" of "+total+" working days");
+    set("biz-comm-mtd-sub",   elapsed+" of "+total+" working days");
 
     // ── Activity ──
     var proc = processActivity(actData);
