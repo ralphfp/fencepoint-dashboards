@@ -222,24 +222,7 @@ body {
 .pipeline-count { font-size: 10px; color: var(--muted); }
 .pipeline-label { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: #bbb; margin-top: 2px; }
 
-/* ── Activity log ── */
-.log-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.log-table thead th {
-  text-align: left; padding: 7px 12px;
-  font-size: 9px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .6px; color: var(--muted);
-  background: var(--bg); border-bottom: 2px solid var(--border);
-  white-space: nowrap;
-}
-.log-table tbody td { padding: 8px 12px; border-bottom: 1px solid #f5f6f8; vertical-align: middle; }
-.log-table tbody tr:last-child td { border-bottom: none; }
-.log-table tbody tr:hover td { background: #fafbfc; }
-.log-wrap { max-height: 340px; overflow-y: auto; border-radius: 0 0 10px 10px; }
-.act-badge {
-  font-size: 11px; font-weight: 600; padding: 3px 9px;
-  border-radius: 10px; white-space: nowrap;
-}
-.outcome-tick { font-size: 15px; font-weight: 700; }
+
 
 /* ── Status bar ── */
 .status-bar {
@@ -648,36 +631,7 @@ function renderActivity(proc) {
   }).join("");
 }
 
-function renderLog(calls) {
-  var sorted = calls.slice().sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
-  var tbody = document.getElementById("log-tbody");
-  if (!tbody) return;
-  if (!sorted.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:28px;color:#bbb;font-style:italic;">No activities recorded today</td></tr>';
-    return;
-  }
-  tbody.innerHTML = sorted.map(function(c) {
-    var cfg      = REP_CONFIG[c.author] || { bg:"#eee", color:"#555", initials:"?" };
-    var dispType = ACTIVITY_MAP[c.activity] || c.activity;
-    var actColor = ACTIVITY_COLORS[dispType] || "#888";
-    var note     = cleanNote(c.body);
-    var timeStr  = c.date ? new Date(c.date).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}) : "";
-    var outcome  = c.noAnswer ? '<span style="color:#e53e3e;font-weight:700;">&#x2717;</span>' : '<span style="color:#1a7a4a;font-weight:700;">&#x2713;</span>';
-    var avatar   = '<span style="width:22px;height:22px;border-radius:50%;background:' + cfg.bg + ';color:' + cfg.color + ';display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;">' + cfg.initials + '</span>';
-    var custCell = c.customer ? c.customer : '<span style="color:#ccc;font-style:italic;">—</span>';
-    var noteCell = note ? note : '<span style="color:#ccc;font-style:italic;">No note</span>';
-    return '<tr>' +
-      '<td style="text-align:center;padding:8px 12px;">' + outcome + '</td>' +
-      '<td style="padding:8px 12px;white-space:nowrap;font-size:11px;color:#aaa;">' + timeStr + '</td>' +
-      '<td style="padding:8px 12px;white-space:nowrap;"><span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:' + cfg.color + ';">' + avatar + ' ' + c.author.split(" ")[0] + '</span></td>' +
-      '<td style="padding:8px 12px;white-space:nowrap;"><span class="act-badge" style="background:' + actColor + '20;color:' + actColor + ';">' + dispType + '</span></td>' +
-      '<td style="padding:8px 12px;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:600;color:var(--slate);">' + custCell + '</td>' +
-      '<td style="padding:8px 12px;max-width:360px;font-size:12px;color:#444;">' + noteCell + '</td>' +
-    '</tr>';
-  }).join("");
-  var logCard = document.getElementById("log-card");
-  if (logCard) logCard.style.display = "block";
-}
+
 
 async function load() {
   var today      = getToday();
