@@ -581,7 +581,7 @@ async function load() {
 
   try {
     // Fire both queries in parallel
-    var salesRes = await fetch("/.netlify/functions/sales-query", {
+    var salesRes = await fetch("/.netlify/functions/salesdesk-query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ monthStart: monthStart, today: today, tomorrow: tomorrow })
