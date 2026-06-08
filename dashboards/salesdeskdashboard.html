@@ -130,22 +130,22 @@ body {
 .kpi-row {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 .kpi-pill {
-  border-radius: 10px;
-  padding: 12px 14px;
+  border-radius: 12px;
+  padding: 16px 18px;
   text-align: center;
 }
 .kpi-pill.p-purple  { background: #F0EEFE; }
 .kpi-pill.p-teal    { background: #E5F6F5; }
 .kpi-pill.p-orange  { background: #FFF0E8; }
-.kpi-pill-val { font-size: 2.4rem; font-weight: 800; line-height: 1; }
+.kpi-pill-val { font-size: 2.6rem; font-weight: 800; line-height: 1; }
 .p-purple .kpi-pill-val  { color: #5B4FCF; }
 .p-teal   .kpi-pill-val  { color: #2a9d97; }
 .p-orange .kpi-pill-val  { color: var(--orange); }
-.kpi-pill-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; margin-top: 4px; }
+.kpi-pill-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; margin-top: 6px; }
 .p-purple .kpi-pill-lbl  { color: #5B4FCF; }
 .p-teal   .kpi-pill-lbl  { color: #2a9d97; }
 .p-orange .kpi-pill-lbl  { color: var(--orange); }
@@ -154,25 +154,25 @@ body {
 .rep-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
+  gap: 10px;
 }
 .rep-card {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
-.rep-top { display: flex; align-items: center; gap: 8px; }
+.rep-top { display: flex; align-items: center; gap: 10px; }
 .avatar {
-  width: 36px; height: 36px; border-radius: 50%;
+  width: 38px; height: 38px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 800; flex-shrink: 0;
+  font-size: 12px; font-weight: 800; flex-shrink: 0;
 }
 .rep-name { font-size: 13px; font-weight: 700; color: var(--slate); line-height: 1.2; }
-.rep-calls { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.rep-calls { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .rep-calls .connected   { color: #16a34a; font-weight: 700; }
 .rep-calls .no-answer   { color: #dc2626; font-weight: 700; }
 .rep-connect-rate { font-size: 12px; font-weight: 700; }
@@ -186,20 +186,21 @@ body {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 14px;
+  margin-bottom: 14px;
 }
 .act-pill {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: 10px;
+  padding: 10px 12px;
   text-align: center;
 }
-.act-pill-val { font-size: 1.6rem; font-weight: 800; color: var(--slate); line-height: 1; }
+.act-pill-val { font-size: 1.8rem; font-weight: 800; color: var(--slate); line-height: 1; }
 .act-pill-val.green  { color: #16a34a; }
 .act-pill-val.red    { color: #dc2626; }
 .act-pill-val.purple { color: #5B4FCF; }
-.act-pill-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-top: 3px; }
+.act-pill-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-top: 4px; }
 
 /* ── Pipeline ── */
 .pipeline-grid {
