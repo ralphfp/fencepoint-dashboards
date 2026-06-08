@@ -102,12 +102,17 @@ exports.handler = async function(event) {
         { fields: ['order_id','price_subtotal','purchase_price','product_uom_qty'], limit: 10000 });
 
       lines.forEach(line => {
-        const oid = Array.isArray(line.order_id) ? line.order_id[0] : line.order_id;
+        const oid  = Array.isArray(line.order_id) ? line.order_id[0] : line.order_id;
         const date = orderDateMap[oid] || '';
-        const rev = line.price_subtotal || 0;
+        const rev  = line.price_subtotal || 0;
         const cost = (line.purchase_price||0) * (line.product_uom_qty||0);
+        const team = (orderTeamMap[oid]||'').toLowerCase();
         salesMtd += rev; costMtd += cost;
-        if (date === today) { salesToday += rev; costToday += cost; }
+        if (date === today) {
+          salesToday += rev; costToday += cost;
+          if (team.includes('timber'))                                  timberToday += rev;
+          else if (team.includes('commercial') || team.includes('fence')) commToday += rev;
+        }
       });
     }
 
