@@ -94,7 +94,7 @@ exports.handler = async function(event) {
     });
 
     let salesToday=0, costToday=0, salesMtd=0, costMtd=0;
-    let timberToday=0, commToday=0;
+    let timberToday=0, commToday=0, timberMtd=0, commMtd=0;
 
     if (orderIds.length > 0) {
       const lines = await odooCall(uid, 'sale.order.line', 'search_read',
@@ -108,10 +108,12 @@ exports.handler = async function(event) {
         const cost = (line.purchase_price||0) * (line.product_uom_qty||0);
         const team = (orderTeamMap[oid]||'').toLowerCase();
         salesMtd += rev; costMtd += cost;
+        if (team.includes('timber'))                                    timberMtd += rev;
+        else if (team.includes('commercial') || team.includes('fence')) commMtd  += rev;
         if (date === today) {
           salesToday += rev; costToday += cost;
-          if (team.includes('timber'))                                  timberToday += rev;
-          else if (team.includes('commercial') || team.includes('fence')) commToday += rev;
+          if (team.includes('timber'))                                    timberToday += rev;
+          else if (team.includes('commercial') || team.includes('fence')) commToday   += rev;
         }
       });
     }
@@ -240,7 +242,7 @@ exports.handler = async function(event) {
         orders:   { salesToday, costToday, salesMtd, costMtd },
         invoices: { salesInv, gpInv },
         pipeline: pipelineByMonth,
-        bizData:  { timberToday, commToday },
+        bizData:  { timberToday, commToday, timberMtd, commMtd },
         activity: { calls, saleOrdersToday, crmLeadsToday, activityRows },
       })
     };
