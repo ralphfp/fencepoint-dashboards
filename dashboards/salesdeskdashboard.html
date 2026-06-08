@@ -402,27 +402,7 @@ body {
 
 </div>
 
-  <!-- Activity Log -->
-  <div class="card" id="log-card" style="display:none">
-    <div class="card-title">Agent Activity Log — Today</div>
-    <div class="log-wrap">
-      <table class="log-table">
-        <thead>
-          <tr>
-            <th style="width:36px;text-align:center;"></th>
-            <th>Time</th>
-            <th>Agent</th>
-            <th>Type</th>
-            <th>Customer</th>
-            <th>Note</th>
-          </tr>
-        </thead>
-        <tbody id="log-tbody">
-          <tr><td colspan="6" style="text-align:center;padding:28px;color:#bbb;font-style:italic;">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
+
 
 <div class="status-bar" id="status-bar">Loading…</div>
 </div><!-- /main -->
@@ -560,6 +540,29 @@ function getMonthStart(today) { return today.slice(0,8)+"01"; }
 
 // ── Activity data comes bundled from sales-query ────────────────────────────────
 
+
+// ── Render pipeline ──────────────────────────────────────────────────────────
+function renderPipeline(monthMap, today) {
+  var pgrid = document.getElementById("pipeline-grid");
+  if (!pgrid) return;
+  var sortedKeys = Object.keys(monthMap).sort();
+  var currentMKey = today.substring(0,7);
+  if (!sortedKeys.length) {
+    pgrid.innerHTML = '<div style="color:#aaa;font-size:0.8rem;padding:10px;">No confirmed pipeline orders found.</div>';
+    return;
+  }
+  pgrid.innerHTML = sortedKeys.map(function(mk) {
+    var parts = mk.split("-"), mo = parseInt(parts[1]);
+    var label = MONTH_NAMES[mo-1]+" "+parts[0];
+    var isCurrent = mk===currentMKey;
+    return '<div class="pipeline-card' + (isCurrent?" current-month":"") + '">' +
+      '<div class="pipeline-month' + (isCurrent?" current":"") + '">' + label + '</div>' +
+      '<div class="pipeline-gp">' + fmt(monthMap[mk].gp) + '</div>' +
+      '<div class="pipeline-count">' + monthMap[mk].cnt + ' orders</div>' +
+      '<div class="pipeline-label">Confirmed GP</div>' +
+    '</div>';
+  }).join("");
+}
 
 // ── Activity helpers ─────────────────────────────────────────────────────────
 function cleanNote(h) {
@@ -741,10 +744,7 @@ async function load() {
     // ── Activity ──
     var proc = processActivity(actData);
     renderActivity(proc);
-    var logCalls = dedup((actData.calls||[]).map(function(r) {
-      return { author:r.author, activity:r.activity, customer:r.customer, body:r.body, date:r.date, noAnswer:isNoAnswer(r.body) };
-    }));
-    renderLog(logCalls);
+
 
     // ── Pipeline ──
     renderPipeline(salesRes.pipeline || {}, today);
