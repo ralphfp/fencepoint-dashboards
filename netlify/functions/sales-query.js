@@ -109,23 +109,56 @@ exports.handler = async function(event) {
       { fields: ['move_type','amount_untaxed','invoice_origin'], limit: 2000 });
 
     let salesInv = 0;
-    const invoiceOrigins = [];
+    const invoiceOrigins = [];   // origins from invoices only (not credit notes)
+    const refundOrigins = [];    // origins from credit notes only
+
     invoices.forEach(inv => {
       const amt = inv.amount_untaxed || 0;
       if (inv.move_type === 'out_invoice') {
         salesInv += amt;
-        if (inv.invoice_origin) invoiceOrigins.push(inv.invoice_origin);
+        if (inv.invoice_origin) {
+          // Handle comma-separated multi-SO origins (e.g. "SO/34305, SO/34307")
+          inv.invoice_origin.split(',').forEach(raw => {
+            const name = raw.trim();
+            // Only include current-format SO names (SO/xxxxx), not old UK1SO- format
+            if (name.match(/^SO\/\d+$/)) invoiceOrigins.push(name);
+          });
+        }
       } else if (inv.move_type === 'out_refund') {
         salesInv -= amt;
+        if (inv.invoice_origin) {
+          inv.invoice_origin.split(',').forEach(raw => {
+            const name = raw.trim();
+            if (name.match(/^SO\/\d+$/)) refundOrigins.push(name);
+          });
+        }
       }
     });
 
     let gpInv = 0;
-    if (invoiceOrigins.length > 0) {
+    // Collect all unique SO names to look up (invoices + refunds combined)
+    const allOrigins = [...new Set([...invoiceOrigins, ...refundOrigins])];
+
+    if (allOrigins.length > 0) {
       const linkedOrders = await odooCall(uid, 'sale.order', 'search_read',
-        [[['name','in',invoiceOrigins]]],
+        [[['name','in',allOrigins]]],
         { fields: ['name','margin'], limit: 2000 });
-      linkedOrders.forEach(o => { gpInv += (o.margin || 0); });
+
+      // Build a margin map keyed by SO name (deduplicates automatically)
+      const marginMap = {};
+      linkedOrders.forEach(o => { marginMap[o.name] = o.margin || 0; });
+
+      // Sum margins for invoice SOs, subtract margins for credit note SOs
+      // Use Sets so each SO is counted only once even if invoiced multiple times
+      const invoicedSoNames = new Set(invoiceOrigins);
+      const refundSoNames   = new Set(refundOrigins);
+
+      invoicedSoNames.forEach(name => {
+        if (marginMap[name] !== undefined) gpInv += marginMap[name];
+      });
+      refundSoNames.forEach(name => {
+        if (marginMap[name] !== undefined) gpInv -= marginMap[name];
+      });
     }
 
     // Q3: Pipeline — confirmed orders not fully delivered, grouped by commitment_date
