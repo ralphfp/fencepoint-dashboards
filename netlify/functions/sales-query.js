@@ -102,62 +102,52 @@ exports.handler = async function(event) {
       });
     }
 
-    // Q2: Invoices MTD
+    // Q2: Invoices MTD — revenue from account.move, GP from invoice lines directly
+    // Using price_subtotal - (purchase_price * quantity) per line is the most accurate
+    // method as it only counts GP on lines actually invoiced, not whole-SO margin.
+
     const invoices = await odooCall(uid, 'account.move', 'search_read',
       [[['move_type','in',['out_invoice','out_refund']],['state','=','posted'],
         ['invoice_date','>=',monthStart],['invoice_date','<',tomorrow]]],
-      { fields: ['move_type','amount_untaxed','invoice_origin'], limit: 2000 });
+      { fields: ['id','move_type','amount_untaxed'], limit: 2000 });
 
     let salesInv = 0;
-    const invoiceOrigins = [];   // origins from invoices only (not credit notes)
-    const refundOrigins = [];    // origins from credit notes only
+    const invoiceIds = [];
+    const refundIds  = [];
 
     invoices.forEach(inv => {
       const amt = inv.amount_untaxed || 0;
       if (inv.move_type === 'out_invoice') {
         salesInv += amt;
-        if (inv.invoice_origin) {
-          // Handle comma-separated multi-SO origins (e.g. "SO/34305, SO/34307")
-          inv.invoice_origin.split(',').forEach(raw => {
-            const name = raw.trim();
-            // Only include current-format SO names (SO/xxxxx), not old UK1SO- format
-            if (name.match(/^SO\/\d+$/)) invoiceOrigins.push(name);
-          });
-        }
+        invoiceIds.push(inv.id);
       } else if (inv.move_type === 'out_refund') {
         salesInv -= amt;
-        if (inv.invoice_origin) {
-          inv.invoice_origin.split(',').forEach(raw => {
-            const name = raw.trim();
-            if (name.match(/^SO\/\d+$/)) refundOrigins.push(name);
-          });
-        }
+        refundIds.push(inv.id);
       }
     });
 
     let gpInv = 0;
-    // Collect all unique SO names to look up (invoices + refunds combined)
-    const allOrigins = [...new Set([...invoiceOrigins, ...refundOrigins])];
+    const allInvoiceIds = [...invoiceIds, ...refundIds];
 
-    if (allOrigins.length > 0) {
-      const linkedOrders = await odooCall(uid, 'sale.order', 'search_read',
-        [[['name','in',allOrigins]]],
-        { fields: ['name','margin'], limit: 2000 });
+    if (allInvoiceIds.length > 0) {
+      // Fetch all invoice lines that have a purchase_price (i.e. product lines)
+      const invLines = await odooCall(uid, 'account.move.line', 'search_read',
+        [[['move_id','in',allInvoiceIds],['purchase_price','>',0]]],
+        { fields: ['move_id','price_subtotal','purchase_price','quantity'], limit: 10000 });
 
-      // Build a margin map keyed by SO name (deduplicates automatically)
-      const marginMap = {};
-      linkedOrders.forEach(o => { marginMap[o.name] = o.margin || 0; });
+      // Build sets for fast invoice/refund lookup
+      const invoiceIdSet = new Set(invoiceIds);
+      const refundIdSet  = new Set(refundIds);
 
-      // Sum margins for invoice SOs, subtract margins for credit note SOs
-      // Use Sets so each SO is counted only once even if invoiced multiple times
-      const invoicedSoNames = new Set(invoiceOrigins);
-      const refundSoNames   = new Set(refundOrigins);
-
-      invoicedSoNames.forEach(name => {
-        if (marginMap[name] !== undefined) gpInv += marginMap[name];
-      });
-      refundSoNames.forEach(name => {
-        if (marginMap[name] !== undefined) gpInv -= marginMap[name];
+      invLines.forEach(line => {
+        const mid = Array.isArray(line.move_id) ? line.move_id[0] : line.move_id;
+        const lineGp = (line.price_subtotal || 0) - (line.purchase_price || 0) * (line.quantity || 0);
+        // Invoice lines add GP; credit note lines (price_subtotal is positive) subtract GP
+        if (invoiceIdSet.has(mid)) {
+          gpInv += lineGp;
+        } else if (refundIdSet.has(mid)) {
+          gpInv -= lineGp;
+        }
       });
     }
 
