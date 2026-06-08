@@ -556,6 +556,110 @@ function getMonthStart(today) { return today.slice(0,8)+"01"; }
 // ── Activity data comes bundled from sales-query ────────────────────────────────
 
 
+// ── Process activity data ─────────────────────────────────────────────────────
+function processActivity(raw) {
+  var REP_SET = new Set(REPS);
+  var calls = (raw.calls||[]).map(function(r) {
+    return { author:r.author, activity:r.activity, customer:r.customer, body:r.body, date:r.date, noAnswer:isNoAnswer(r.body) };
+  });
+  var dedupedCalls = dedup(calls);
+
+  var repData = {};
+  REPS.forEach(function(rep) {
+    var repCalls = dedupedCalls.filter(function(r){ return r.author===rep; });
+    var totalCalls     = repCalls.length;
+    var totalConnected = repCalls.filter(function(r){ return !r.noAnswer; }).length;
+    var totalNoAnswer  = repCalls.filter(function(r){ return r.noAnswer; }).length;
+    var repActs = (raw.activityRows||[]).filter(function(r){ return r.user_id_label===rep; });
+    var followUps = repActs.filter(function(r){
+      var t = (r.activity_type_id_label||"").toLowerCase();
+      return t.indexOf("quote follow") >= 0 || t.indexOf("opportunity follow") >= 0;
+    }).length;
+    repData[rep] = {
+      totalCalls: totalCalls,
+      totalConnected: totalConnected,
+      totalNoAnswer: totalNoAnswer,
+      outstanding: { total: repActs.length, followUps: followUps }
+    };
+  });
+
+  var quotes    = (raw.saleOrders||[]).filter(function(o){ return o.state==="draft"; }).length;
+  var confirmed = (raw.saleOrders||[]).filter(function(o){ return o.state==="sale"; }).length;
+  var opps      = (raw.crmLeads||[]).filter(function(l){ return REP_SET.has(l.rep) && !(l.name||"").startsWith("FW:"); }).length;
+
+  var allCalls = dedupedCalls.length;
+  var allConn  = dedupedCalls.filter(function(r){ return !r.noAnswer; }).length;
+  var allNA    = dedupedCalls.filter(function(r){ return r.noAnswer; }).length;
+  var typeSet  = {};
+  dedupedCalls.forEach(function(r){ typeSet[ACTIVITY_MAP[r.activity]||r.activity] = 1; });
+  var actTypes = Object.keys(typeSet).length;
+
+  return { repData:repData, quotes:quotes, confirmed:confirmed, opps:opps, allCalls:allCalls, allConn:allConn, allNA:allNA, actTypes:actTypes };
+}
+
+function renderActivity(proc) {
+  set("act-quotes",    proc.quotes);
+  set("act-confirmed", proc.confirmed);
+  set("act-opps",      proc.opps);
+  set("act-total",     proc.allCalls);
+  set("act-connected", proc.allConn);
+  set("act-noanswer",  proc.allNA);
+  set("act-types",     proc.actTypes);
+
+  var grid = document.getElementById("rep-grid");
+  if (!grid) return;
+  grid.innerHTML = REPS.map(function(rep) {
+    var d   = proc.repData[rep];
+    var cfg = REP_CONFIG[rep];
+    var rate = d.totalCalls > 0 ? Math.round(d.totalConnected/d.totalCalls*100) : 0;
+    var rateClass = rate > 0 ? "good" : "zero";
+    var connHtml = '<span style="color:#16a34a;font-weight:700;">' + d.totalConnected + '&#10003;</span>';
+    var naHtml   = '<span style="color:#dc2626;font-weight:700;">' + d.totalNoAnswer + '&#10007;</span>';
+    return '<div class="rep-card">' +
+      '<div class="rep-top">' +
+        '<div class="avatar" style="background:' + cfg.bg + ';color:' + cfg.color + ';">' + cfg.initials + '</div>' +
+        '<div>' +
+          '<div class="rep-name">' + rep.split(" ")[0] + ' ' + rep.split(" ")[1] + '</div>' +
+          '<div class="rep-calls">' + d.totalCalls + ' calls &nbsp;&middot;&nbsp; ' + connHtml + ' / ' + naHtml + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="rep-connect-rate ' + rateClass + '">' + rate + '% connect</div>' +
+      '<div class="rep-outstanding">' + d.outstanding.total + ' outstanding &nbsp;&middot;&nbsp; <span>' + d.outstanding.followUps + ' quote/opp follow-ups</span></div>' +
+    '</div>';
+  }).join("");
+}
+
+function renderLog(calls) {
+  var sorted = calls.slice().sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
+  var tbody = document.getElementById("log-tbody");
+  if (!tbody) return;
+  if (!sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:28px;color:#bbb;font-style:italic;">No activities recorded today</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sorted.map(function(c) {
+    var cfg      = REP_CONFIG[c.author] || { bg:"#eee", color:"#555", initials:"?" };
+    var dispType = ACTIVITY_MAP[c.activity] || c.activity;
+    var actColor = ACTIVITY_COLORS[dispType] || "#888";
+    var note     = cleanNote(c.body);
+    var timeStr  = c.date ? new Date(c.date).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}) : "";
+    var outcome  = c.noAnswer ? '<span style="color:#e53e3e;font-weight:700;">&#x2717;</span>' : '<span style="color:#1a7a4a;font-weight:700;">&#x2713;</span>';
+    var avatar   = '<span style="width:22px;height:22px;border-radius:50%;background:' + cfg.bg + ';color:' + cfg.color + ';display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;">' + cfg.initials + '</span>';
+    var custCell = c.customer ? c.customer : '<span style="color:#ccc;font-style:italic;">—</span>';
+    var noteCell = note ? note : '<span style="color:#ccc;font-style:italic;">No note</span>';
+    return '<tr>' +
+      '<td style="text-align:center;padding:8px 12px;">' + outcome + '</td>' +
+      '<td style="padding:8px 12px;white-space:nowrap;font-size:11px;color:#aaa;">' + timeStr + '</td>' +
+      '<td style="padding:8px 12px;white-space:nowrap;"><span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:' + cfg.color + ';">' + avatar + ' ' + c.author.split(" ")[0] + '</span></td>' +
+      '<td style="padding:8px 12px;white-space:nowrap;"><span class="act-badge" style="background:' + actColor + '20;color:' + actColor + ';">' + dispType + '</span></td>' +
+      '<td style="padding:8px 12px;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:600;color:var(--slate);">' + custCell + '</td>' +
+      '<td style="padding:8px 12px;max-width:360px;font-size:12px;color:#444;">' + noteCell + '</td>' +
+    '</tr>';
+  }).join("");
+  var logCard = document.getElementById("log-card");
+  if (logCard) logCard.style.display = "block";
+}
+
 async function load() {
   var today      = getToday();
   var monthStart = getMonthStart(today);
