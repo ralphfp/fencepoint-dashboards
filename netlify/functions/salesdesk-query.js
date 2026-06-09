@@ -81,7 +81,7 @@ exports.handler = async function(event) {
     const [orders, todayPOS] = await Promise.all([
       odooCall(uid, 'sale.order', 'search_read',
         [[['state','in',['sale','done']],['date_order','>=',monthStart+' 00:00:00'],['date_order','<',tomorrow+' 00:00:00']]],
-        { fields: ['id','date_order','team_id','amount_untaxed','partner_id'], limit: 2000 }),
+        { fields: ['id','date_order','team_id','amount_untaxed','partner_id','margin'], limit: 2000 }),
 
       // POS orders today — invoiced, timber or commercial team
       odooCall(uid, 'pos.order', 'search_read',
@@ -140,19 +140,14 @@ exports.handler = async function(event) {
       }
     });
 
-    // costToday/costMtd — still need line-level data for GP calculation
-    if (orderIds.length > 0) {
-      const lines = await odooCall(uid, 'sale.order.line', 'search_read',
-        [[['order_id','in',orderIds],['price_subtotal','>',0]]],
-        { fields: ['order_id','purchase_price','product_uom_qty'], limit: 10000 });
-      lines.forEach(line => {
-        const oid  = Array.isArray(line.order_id) ? line.order_id[0] : line.order_id;
-        const date = orderDateMap[oid] || '';
-        const cost = (line.purchase_price||0) * (line.product_uom_qty||0);
-        costMtd += cost;
-        if (date === today) costToday += cost;
-      });
-    }
+    // GP Today/MTD — use sale_order.margin directly (matches Odoo's own report)
+    // This is more accurate than line-level purchase_price which can be 0 for some lines
+    orders.forEach(o => {
+      const date   = orderDateMap[o.id] || '';
+      const margin = parseFloat(o.margin || 0);
+      costMtd += (parseFloat(o.amount_untaxed||0) - margin); // derive cost from margin
+      if (date === today) costToday += (parseFloat(o.amount_untaxed||0) - margin);
+    });
 
     // Q2: Invoices MTD — revenue from account.move, GP from invoice lines directly
     // Using price_subtotal - (purchase_price * quantity) per line is the most accurate
