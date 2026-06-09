@@ -234,7 +234,7 @@ exports.handler = async function(event) {
 
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache, must-revalidate' },
       body: JSON.stringify({
         orders:   { salesToday, costToday, salesMtd, costMtd },
         invoices: { salesInv, gpInv },
@@ -247,7 +247,7 @@ exports.handler = async function(event) {
   } catch(err) {
     return {
       statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache, must-revalidate' },
       body: JSON.stringify({ error: err.message })
     };
   }
