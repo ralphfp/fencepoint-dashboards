@@ -79,28 +79,41 @@ exports.handler = async function(event) {
     // Q1: Confirmed sale orders MTD — get orders with lines
     const orders = await odooCall(uid, 'sale.order', 'search_read',
       [[['state','=','sale'],['date_order','>=',monthStart+' 00:00:00'],['date_order','<',tomorrow+' 00:00:00']]],
-      { fields: ['id','date_order'], limit: 2000 });
+      { fields: ['id','date_order','team_id','amount_untaxed','margin'], limit: 2000 });
 
     const orderIds = orders.map(o => o.id);
     const orderDateMap = {};
-    orders.forEach(o => { orderDateMap[o.id] = (o.date_order||'').slice(0,10); });
+    // Track team for timber/commercial split
+    const orderTeamMap = {};
+    const orderAmtMap  = {};
+    orders.forEach(o => {
+      orderDateMap[o.id] = (o.date_order||'').slice(0,10);
+      const teamName = Array.isArray(o.team_id) ? o.team_id[1] : (o.team_id||'');
+      orderTeamMap[o.id] = teamName;
+      orderAmtMap[o.id]  = o.amount_untaxed || 0;
+    });
 
     let salesToday=0, costToday=0, salesMtd=0, costMtd=0;
+    let timberToday=0, commToday=0, timberMtd=0, commMtd=0;
 
-    if (orderIds.length > 0) {
-      const lines = await odooCall(uid, 'sale.order.line', 'search_read',
-        [[['order_id','in',orderIds],['price_subtotal','>',0]]],
-        { fields: ['order_id','price_subtotal','purchase_price','product_uom_qty'], limit: 10000 });
-
-      lines.forEach(line => {
-        const oid = Array.isArray(line.order_id) ? line.order_id[0] : line.order_id;
-        const date = orderDateMap[oid] || '';
-        const rev = line.price_subtotal || 0;
-        const cost = (line.purchase_price||0) * (line.product_uom_qty||0);
-        salesMtd += rev; costMtd += cost;
-        if (date === today) { salesToday += rev; costToday += cost; }
-      });
-    }
+    // Sum revenue and GP using sale_order.margin (matches Odoo's own report)
+    // Using sale_order.margin is more accurate than line-level purchase_price
+    // which can be 0 for lines where cost hasn't been set at order time
+    orders.forEach(o => {
+      const date   = (o.date_order||'').slice(0,10);
+      const rev    = parseFloat(o.amount_untaxed||0);
+      const margin = parseFloat(o.margin||0);
+      const cost   = rev - margin;
+      const team   = Array.isArray(o.team_id) ? o.team_id[1] : (o.team_id||'');
+      salesMtd += rev; costMtd += cost;
+      if (team === 'Timber')     timberMtd += rev;
+      else if (team === 'Commercial') commMtd += rev;
+      if (date === today) {
+        salesToday += rev; costToday += cost;
+        if (team === 'Timber')        timberToday += rev;
+        else if (team === 'Commercial') commToday += rev;
+      }
+    });
 
     // Q2: Invoices MTD — revenue from account.move, GP from invoice lines directly
     // Using price_subtotal - (purchase_price * quantity) per line is the most accurate
@@ -166,13 +179,68 @@ exports.handler = async function(event) {
       pipelineByMonth[mKey].cnt += 1;
     });
 
+    // Q4: Activity data for Salesdesk Dashboard
+    const [callRows, orderRowsToday, leadRowsToday, actRows] = await Promise.all([
+      // Phone calls logged today
+      odooCall(uid, 'mail.message', 'search_read', [[
+        ['mail_activity_type_id.name', 'in', ['Proactive Call','Commercial Brochure Follow Up','Opportunity Follow Up Call','Quote Follow Up Call','Inbound Call','Follow up call']],
+        ['author_id.name', 'in', ['Ralph Lewis','Roger Lewis','Daniel Wilkin','Amy Hope','Kayleigh Rankin']],
+        ['date', '>=', today + ' 00:00:00'],
+        ['date', '<',  tomorrow + ' 00:00:00'],
+      ]], { fields: ['author_id','mail_activity_type_id','record_name','body','date'], limit: 500 }),
+
+      // Sale orders created today (quotes + confirmed)
+      odooCall(uid, 'sale.order', 'search_read', [[
+        ['date_order', '>=', today + ' 00:00:00'],
+        ['date_order', '<',  tomorrow + ' 00:00:00'],
+      ]], { fields: ['name','state','user_id'], limit: 500 }),
+
+      // CRM leads created today
+      odooCall(uid, 'crm.lead', 'search_read', [[
+        ['create_date', '>=', today + ' 00:00:00'],
+        ['create_date', '<',  tomorrow + ' 00:00:00'],
+      ]], { fields: ['name','stage_id','user_id'], limit: 500 }),
+
+      // Outstanding activities (overdue/due today)
+      odooCall(uid, 'mail.activity', 'search_read', [[
+        ['user_id.name', 'in', ['Ralph Lewis','Roger Lewis','Daniel Wilkin','Amy Hope','Kayleigh Rankin']],
+        ['date_deadline', '<=', today],
+      ]], { fields: ['user_id','activity_type_id'], limit: 1000 }),
+    ]);
+
+    const calls = callRows.map(r => ({
+      author:   Array.isArray(r.author_id)              ? r.author_id[1]              : '',
+      activity: Array.isArray(r.mail_activity_type_id)  ? r.mail_activity_type_id[1]  : '',
+      customer: r.record_name || '',
+      body:     r.body || '',
+      date:     r.date || '',
+    }));
+
+    const saleOrdersToday = orderRowsToday.map(r => ({
+      name:  r.name || '',
+      state: r.state || '',
+      rep:   Array.isArray(r.user_id) ? r.user_id[1] : '',
+    }));
+
+    const crmLeadsToday = leadRowsToday.map(r => ({
+      name: r.name || '',
+      rep:  Array.isArray(r.user_id) ? r.user_id[1] : '',
+    }));
+
+    const activityRows = actRows.map(r => ({
+      user_id_label:          Array.isArray(r.user_id)          ? r.user_id[1]          : '',
+      activity_type_id_label: Array.isArray(r.activity_type_id) ? r.activity_type_id[1] : '',
+    }));
+
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        orders: { salesToday, costToday, salesMtd, costMtd },
+        orders:   { salesToday, costToday, salesMtd, costMtd },
         invoices: { salesInv, gpInv },
         pipeline: pipelineByMonth,
+        bizData:  { timberToday, commToday },
+        activity: { calls, saleOrdersToday, crmLeadsToday, activityRows },
       })
     };
 
