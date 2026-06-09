@@ -76,45 +76,81 @@ exports.handler = async function(event) {
     const { monthStart, today, tomorrow } = JSON.parse(event.body);
     const uid = await getUid();
 
-    // Q1: Confirmed sale orders MTD — get orders with lines
-    const orders = await odooCall(uid, 'sale.order', 'search_read',
-      [[['state','=','sale'],['date_order','>=',monthStart+' 00:00:00'],['date_order','<',tomorrow+' 00:00:00']]],
-      { fields: ['id','date_order','team_id','amount_untaxed'], limit: 2000 });
+    // Q1: Confirmed sale orders MTD — matching daily activity report logic exactly
+    // Uses sale_order.amount_untaxed (header total) + POS orders, same as daily report
+    const [orders, todayPOS] = await Promise.all([
+      odooCall(uid, 'sale.order', 'search_read',
+        [[['state','in',['sale','done']],['date_order','>=',monthStart+' 00:00:00'],['date_order','<',tomorrow+' 00:00:00']]],
+        { fields: ['id','date_order','team_id','amount_untaxed','partner_id'], limit: 2000 }),
+
+      // POS orders today — invoiced, timber or commercial team
+      odooCall(uid, 'pos.order', 'search_read',
+        [[['date_order','>=',today+' 00:00:00'],['date_order','<',tomorrow+' 00:00:00'],
+          ['crm_team_id.name','in',['Timber','Commercial']],['state','=','invoiced']]],
+        { fields: ['amount_total','amount_tax','partner_id','crm_team_id'], limit: 200 }),
+    ]);
 
     const orderIds = orders.map(o => o.id);
     const orderDateMap = {};
-    // Track team for timber/commercial split
     const orderTeamMap = {};
-    const orderAmtMap  = {};
     orders.forEach(o => {
       orderDateMap[o.id] = (o.date_order||'').slice(0,10);
-      const teamName = Array.isArray(o.team_id) ? o.team_id[1] : (o.team_id||'');
-      orderTeamMap[o.id] = teamName;
-      orderAmtMap[o.id]  = o.amount_untaxed || 0;
+      orderTeamMap[o.id] = Array.isArray(o.team_id) ? o.team_id[1] : (o.team_id||'');
     });
 
     let salesToday=0, costToday=0, salesMtd=0, costMtd=0;
     let timberToday=0, commToday=0, timberMtd=0, commMtd=0;
 
+    // Build dedup key set from today's sale orders (to avoid double-counting POS)
+    const saleOrderKeys = {};
+    orders.forEach(o => {
+      if ((o.date_order||'').slice(0,10) === today) {
+        const team = Array.isArray(o.team_id) ? o.team_id[1] : (o.team_id||'');
+        const partner = Array.isArray(o.partner_id) ? o.partner_id[1] : (o.partner_id||'');
+        const amt = parseFloat(o.amount_untaxed||0).toFixed(2);
+        saleOrderKeys[team+'|'+partner+'|'+amt] = true;
+      }
+    });
+
+    // Sum sale orders by team
+    orders.forEach(o => {
+      const date = orderDateMap[o.id] || '';
+      const team = orderTeamMap[o.id] || '';
+      const rev  = parseFloat(o.amount_untaxed||0);
+      salesMtd += rev;
+      if (team === 'Timber')     timberMtd += rev;
+      else if (team === 'Commercial') commMtd += rev;
+      if (date === today) {
+        salesToday += rev;
+        if (team === 'Timber')        timberToday += rev;
+        else if (team === 'Commercial') commToday += rev;
+      }
+    });
+
+    // Add POS orders today (deduped against sale orders)
+    todayPOS.forEach(po => {
+      const exVat = parseFloat(po.amount_total||0) - parseFloat(po.amount_tax||0);
+      const team    = Array.isArray(po.crm_team_id) ? po.crm_team_id[1] : (po.crm_team_id||'');
+      const partner = Array.isArray(po.partner_id)  ? po.partner_id[1]  : (po.partner_id||'');
+      const key = team+'|'+partner+'|'+exVat.toFixed(2);
+      if (!saleOrderKeys[key]) {
+        salesToday += exVat;
+        if (team === 'Timber')        timberToday += exVat;
+        else if (team === 'Commercial') commToday += exVat;
+      }
+    });
+
+    // costToday/costMtd — still need line-level data for GP calculation
     if (orderIds.length > 0) {
       const lines = await odooCall(uid, 'sale.order.line', 'search_read',
         [[['order_id','in',orderIds],['price_subtotal','>',0]]],
-        { fields: ['order_id','price_subtotal','purchase_price','product_uom_qty'], limit: 10000 });
-
+        { fields: ['order_id','purchase_price','product_uom_qty'], limit: 10000 });
       lines.forEach(line => {
         const oid  = Array.isArray(line.order_id) ? line.order_id[0] : line.order_id;
         const date = orderDateMap[oid] || '';
-        const rev  = line.price_subtotal || 0;
         const cost = (line.purchase_price||0) * (line.product_uom_qty||0);
-        const team = (orderTeamMap[oid]||'').toLowerCase();
-        salesMtd += rev; costMtd += cost;
-        if (team.includes('timber'))                                    timberMtd += rev;
-        else if (team.includes('commercial') || team.includes('fence')) commMtd  += rev;
-        if (date === today) {
-          salesToday += rev; costToday += cost;
-          if (team.includes('timber'))                                    timberToday += rev;
-          else if (team.includes('commercial') || team.includes('fence')) commToday   += rev;
-        }
+        costMtd += cost;
+        if (date === today) costToday += cost;
       });
     }
 
