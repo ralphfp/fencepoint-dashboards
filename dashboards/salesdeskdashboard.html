@@ -120,7 +120,7 @@ body {
 /* ── Gauge grid ── */
 .gauge-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
 }
 .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
@@ -307,23 +307,33 @@ body {
           <div id="dw-st"></div>
         </div>
         <div class="gauge-wrap">
+          <div class="gauge-lbl">Sales Inv. Today</div>
+          <div id="dw-sit"></div>
+        </div>
+        <div class="gauge-wrap">
           <div class="gauge-lbl">Sales MTD</div>
           <div id="dw-sm"></div>
         </div>
         <div class="gauge-wrap">
-          <div class="gauge-lbl">Sales Invoiced MTD</div>
+          <div class="gauge-lbl">Sales Inv. MTD</div>
           <div id="dw-si"></div>
         </div>
+      </div>
+      <div class="gauge-grid" style="margin-top:4px;">
         <div class="gauge-wrap">
           <div class="gauge-lbl">GP Today</div>
           <div id="dw-gt"></div>
+        </div>
+        <div class="gauge-wrap">
+          <div class="gauge-lbl">GP Inv. Today</div>
+          <div id="dw-git"></div>
         </div>
         <div class="gauge-wrap">
           <div class="gauge-lbl">GP MTD</div>
           <div id="dw-gm"></div>
         </div>
         <div class="gauge-wrap">
-          <div class="gauge-lbl">GP Invoiced MTD</div>
+          <div class="gauge-lbl">GP Inv. MTD</div>
           <div id="dw-gi"></div>
         </div>
       </div>
@@ -512,8 +522,8 @@ function setDial(id, color, actual, target) {
   if (el) el.innerHTML = buildDial(pct, color, fmt(actual), fmt(target));
 }
 function initDials() {
-  ["dw-st","dw-sm","dw-si"].forEach(function(id){var el=document.getElementById(id);if(el)el.innerHTML=buildDial(0.001,"#E8500A","…","…");});
-  ["dw-gt","dw-gm","dw-gi"].forEach(function(id){var el=document.getElementById(id);if(el)el.innerHTML=buildDial(0.001,"#A0A0A0","…","…");});
+  ["dw-st","dw-sit","dw-sm","dw-si"].forEach(function(id){var el=document.getElementById(id);if(el)el.innerHTML=buildDial(0.001,"#E8500A","…","…");});
+  ["dw-gt","dw-git","dw-gm","dw-gi"].forEach(function(id){var el=document.getElementById(id);if(el)el.innerHTML=buildDial(0.001,"#A0A0A0","…","…");});
 }
 
 // ── Date setup ────────────────────────────────────────────────────────────────
@@ -680,12 +690,14 @@ async function load() {
     var salesMtd   = salesRes.orders.salesMtd,    costMtd   = salesRes.orders.costMtd;
     var gpToday    = salesToday - costToday,       gpMtd     = salesMtd - costMtd;
 
-    setDial("dw-st","#E8500A", salesToday,          dailySales);
-    setDial("dw-sm","#E8500A", salesMtd,            mtdSalesTarget);
-    setDial("dw-si","#E8500A", salesRes.invoices.salesInv, mtdSalesTarget);
-    setDial("dw-gt","#A0A0A0", gpToday,             dailyGP);
-    setDial("dw-gm","#A0A0A0", gpMtd,               mtdGPTarget);
-    setDial("dw-gi","#A0A0A0", salesRes.invoices.gpInv, mtdGPTarget);
+    setDial("dw-st", "#E8500A", salesToday,                        dailySales);
+    setDial("dw-sit","#E8500A", salesRes.invoices.salesInvToday,  dailySales);
+    setDial("dw-sm", "#E8500A", salesMtd,                         mtdSalesTarget);
+    setDial("dw-si", "#E8500A", salesRes.invoices.salesInv,       mtdSalesTarget);
+    setDial("dw-gt", "#A0A0A0", gpToday,                          dailyGP);
+    setDial("dw-git","#A0A0A0", salesRes.invoices.gpInvToday,     dailyGP);
+    setDial("dw-gm", "#A0A0A0", gpMtd,                            mtdGPTarget);
+    setDial("dw-gi", "#A0A0A0", salesRes.invoices.gpInv,          mtdGPTarget);
 
     // ── Business performance bar (from activity bizData) ──
     var bizData = salesRes.bizData || {};
