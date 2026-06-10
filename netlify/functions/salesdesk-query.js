@@ -156,24 +156,28 @@ exports.handler = async function(event) {
     const invoices = await odooCall(uid, 'account.move', 'search_read',
       [[['move_type','in',['out_invoice','out_refund']],['state','=','posted'],
         ['invoice_date','>=',monthStart],['invoice_date','<',tomorrow]]],
-      { fields: ['id','move_type','amount_untaxed'], limit: 2000 });
+      { fields: ['id','move_type','amount_untaxed','invoice_date'], limit: 2000 });
 
-    let salesInv = 0;
-    const invoiceIds = [];
-    const refundIds  = [];
+    let salesInv = 0, salesInvToday = 0;
+    const invoiceIds = [], invoiceIdsToday = [];
+    const refundIds  = [], refundIdsToday  = [];
 
     invoices.forEach(inv => {
-      const amt = inv.amount_untaxed || 0;
+      const amt     = inv.amount_untaxed || 0;
+      const invDate = (inv.invoice_date || '').slice(0, 10);
+      const isToday = invDate === today;
       if (inv.move_type === 'out_invoice') {
         salesInv += amt;
         invoiceIds.push(inv.id);
+        if (isToday) { salesInvToday += amt; invoiceIdsToday.push(inv.id); }
       } else if (inv.move_type === 'out_refund') {
         salesInv -= amt;
         refundIds.push(inv.id);
+        if (isToday) { salesInvToday -= amt; refundIdsToday.push(inv.id); }
       }
     });
 
-    let gpInv = 0;
+    let gpInv = 0, gpInvToday = 0;
     const allInvoiceIds = [...invoiceIds, ...refundIds];
 
     if (allInvoiceIds.length > 0) {
@@ -183,17 +187,20 @@ exports.handler = async function(event) {
         { fields: ['move_id','price_subtotal','purchase_price','quantity'], limit: 10000 });
 
       // Build sets for fast invoice/refund lookup
-      const invoiceIdSet = new Set(invoiceIds);
-      const refundIdSet  = new Set(refundIds);
+      const invoiceIdSet      = new Set(invoiceIds);
+      const refundIdSet       = new Set(refundIds);
+      const invoiceIdSetToday = new Set(invoiceIdsToday);
+      const refundIdSetToday  = new Set(refundIdsToday);
 
       invLines.forEach(line => {
-        const mid = Array.isArray(line.move_id) ? line.move_id[0] : line.move_id;
+        const mid    = Array.isArray(line.move_id) ? line.move_id[0] : line.move_id;
         const lineGp = (line.price_subtotal || 0) - (line.purchase_price || 0) * (line.quantity || 0);
-        // Invoice lines add GP; credit note lines (price_subtotal is positive) subtract GP
         if (invoiceIdSet.has(mid)) {
           gpInv += lineGp;
+          if (invoiceIdSetToday.has(mid)) gpInvToday += lineGp;
         } else if (refundIdSet.has(mid)) {
           gpInv -= lineGp;
+          if (refundIdSetToday.has(mid)) gpInvToday -= lineGp;
         }
       });
     }
@@ -271,7 +278,7 @@ exports.handler = async function(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         orders:   { salesToday, costToday, salesMtd, costMtd },
-        invoices: { salesInv, gpInv },
+        invoices: { salesInv, gpInv, salesInvToday, gpInvToday },
         pipeline: pipelineByMonth,
         bizData:  { timberToday, commToday, timberMtd, commMtd },
         activity: { calls, saleOrdersToday, crmLeadsToday, activityRows },
