@@ -7,7 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Plus Jakarta Sans','Segoe UI',system-ui,sans-serif;background:#f5f4f0;color:#1a1a18;font-size:13px;padding:0}
+html,body{height:auto;overflow-y:auto}body{font-family:'Plus Jakarta Sans','Segoe UI',system-ui,sans-serif;background:#f5f4f0;color:#1a1a18;font-size:13px;padding:0}
 
 /* ── Header ── */
 .site-header{background:#fff;border-bottom:4px solid #F37032;padding:14px 20px 12px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.06)}
@@ -554,6 +554,7 @@ function renderDrill(pid,raw26,raw25,visMonths,priorMonths){
   var sparkSvg='<svg width="'+sparkW+'" height="'+sparkH+'" style="margin-top:8px"><polyline points="'+pts+'" fill="none" stroke="#F37032" stroke-width="2" stroke-linejoin="round"/>'+sparkVals.map(function(v,i){return'<circle cx="'+Math.round(i*(sparkW/(sparkVals.length-1||1)))+'" cy="'+Math.round(sparkH-(v/sparkMax)*(sparkH-4)+2)+'" r="3" fill="'+(hc(v)?'#F37032':'#e2e5ea')+'"/>';}).join('')+'</svg>';
   var panel=document.getElementById('dd');
   panel.style.display='block';
+  setTimeout(function(){panel.scrollIntoView({behavior:'smooth',block:'nearest'});},50);
   panel.innerHTML='<div class="ddp"><div class="ddh"><h3>'+c.name+' — '+fmtF(Math.round(c.total))+' · '+c.invCount+' '+txWord+' · '+sp+'</h3><button class="ddc" onclick="toggleDrill('+pid+')">×</button></div><div class="ddb">'+infoHtml+callHtml+sigHtml+'<div style="margin-top:8px"><div class="ddsub">Spend trend</div>'+sparkSvg+'</div></div></div>';
 }
 
