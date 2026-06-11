@@ -91,13 +91,14 @@ async function fetchInvoicedPeriod(uid, fromStr, toStr) {
       ['invoice_date', '<=', toStr],
       ['partner_id', '!=', false],
     ],
-    ['partner_id', 'invoice_date', 'amount_untaxed', 'move_type']
+    ['partner_id', 'commercial_partner_id', 'invoice_date', 'amount_untaxed', 'move_type']
   );
 
   const map = {};
   invoices.forEach(inv => {
-    const pid   = Array.isArray(inv.partner_id) ? inv.partner_id[0] : inv.partner_id;
-    const pname = Array.isArray(inv.partner_id) ? inv.partner_id[1] : '';
+    // Use commercial_partner_id so contacts roll up to parent company
+    const pid   = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[0] : (Array.isArray(inv.partner_id) ? inv.partner_id[0] : inv.partner_id);
+    const pname = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[1] : (Array.isArray(inv.partner_id) ? inv.partner_id[1] : '');
     const dt    = (inv.invoice_date || '').slice(0, 7);
     if (!dt) return;
     const yr = parseInt(dt.slice(0,4)), mo = parseInt(dt.slice(5,7));
