@@ -22,10 +22,6 @@ function toXml(val) {
   return `<string>${val}</string>`;
 }
 
-function extractInts(xml) {
-  return [...xml.matchAll(/<int>(.*?)<\/int>|<i4>(.*?)<\/i4>/g)].map(m => parseInt(m[1] || m[2]));
-}
-
 function extractVal(v) {
   v = v.trim();
   if (v.startsWith('<int>') || v.startsWith('<i4>')) return parseInt(v.replace(/<\/?(?:int|i4)>/g,''));
@@ -55,7 +51,8 @@ function extractArrayData(xml) {
 async function getUid() {
   const xml = await xmlrpc(process.env.ODOO_URL+'/xmlrpc/2/common','authenticate',
     [process.env.ODOO_DB, process.env.ODOO_USER, process.env.ODOO_API_KEY, {}]);
-  const uid = extractInts(xml)[0];
+  const match = xml.match(/<int>(\d+)<\/int>|<i4>(\d+)<\/i4>/);
+  const uid = match ? parseInt(match[1]||match[2]) : null;
   if (!uid) throw new Error('Odoo auth failed');
   return uid;
 }
@@ -70,141 +67,114 @@ async function odooCall(uid, model, method, args, kwargs) {
   return extractArrayData(xml);
 }
 
+// Paginate through all records — no limit cap
+async function odooSearchAll(uid, model, domain, fields, pageSize=2000) {
+  let allRecords = [];
+  let offset = 0;
+  while (true) {
+    const batch = await odooCall(uid, model, 'search_read', [domain],
+      { fields, limit: pageSize, offset });
+    allRecords = allRecords.concat(batch);
+    if (batch.length < pageSize) break;
+    offset += pageSize;
+  }
+  return allRecords;
+}
+
+async function fetchInvoicedPeriod(uid, fromStr, toStr) {
+  // Paginate through ALL posted invoices/refunds — no limit
+  const invoices = await odooSearchAll(uid, 'account.move',
+    [
+      ['move_type', 'in', ['out_invoice', 'out_refund']],
+      ['state', '=', 'posted'],
+      ['invoice_date', '>=', fromStr],
+      ['invoice_date', '<=', toStr],
+      ['partner_id', '!=', false],
+    ],
+    ['partner_id', 'commercial_partner_id', 'invoice_date', 'amount_untaxed', 'move_type']
+  );
+
+  const map = {};
+  invoices.forEach(inv => {
+    // Use commercial_partner_id so contacts roll up to parent company
+    const pid   = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[0] : (Array.isArray(inv.partner_id) ? inv.partner_id[0] : inv.partner_id);
+    const pname = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[1] : (Array.isArray(inv.partner_id) ? inv.partner_id[1] : '');
+    const dt    = (inv.invoice_date || '').slice(0, 7);
+    if (!dt) return;
+    const yr = parseInt(dt.slice(0,4)), mo = parseInt(dt.slice(5,7));
+    const isRefund = inv.move_type === 'out_refund';
+    const amt = isRefund ? -(inv.amount_untaxed||0) : (inv.amount_untaxed||0);
+    const key = `${pid}|${yr}|${mo}`;
+    if (!map[key]) map[key] = { pid, pname, yr, mo, total: 0, cnt: 0 };
+    map[key].total += amt;
+    if (!isRefund) map[key].cnt++;
+  });
+
+  return Object.values(map).map(r => [r.pid, r.pname, r.yr, r.mo, r.total, r.cnt]);
+}
+
+async function fetchOrdersPeriod(uid, fromStr, toStr) {
+  const [soRows, posRows] = await Promise.all([
+    odooSearchAll(uid, 'sale.order',
+      [
+        ['state', 'in', ['sale', 'done']],
+        ['date_order', '>=', fromStr + ' 00:00:00'],
+        ['date_order', '<=', toStr + ' 23:59:59'],
+        ['partner_id', '!=', false],
+      ],
+      ['partner_id', 'amount_untaxed', 'date_order']
+    ),
+    odooSearchAll(uid, 'pos.order',
+      [
+        ['state', 'in', ['done', 'invoiced', 'paid']],
+        ['date_order', '>=', fromStr + ' 00:00:00'],
+        ['date_order', '<=', toStr + ' 23:59:59'],
+        ['partner_id', '!=', false],
+      ],
+      ['partner_id', 'amount_total', 'amount_tax', 'date_order']
+    ),
+  ]);
+
+  const map = {};
+
+  soRows.forEach(o => {
+    const pid   = Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id;
+    const pname = Array.isArray(o.partner_id) ? o.partner_id[1] : '';
+    const dt    = (o.date_order || '').slice(0, 7);
+    if (!dt) return;
+    const yr = parseInt(dt.slice(0,4)), mo = parseInt(dt.slice(5,7));
+    const key = `${pid}|${yr}|${mo}`;
+    if (!map[key]) map[key] = { pid, pname, yr, mo, total: 0, cnt: 0 };
+    map[key].total += parseFloat(o.amount_untaxed||0);
+    map[key].cnt++;
+  });
+
+  posRows.forEach(o => {
+    const pid   = Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id;
+    const pname = Array.isArray(o.partner_id) ? o.partner_id[1] : '';
+    const dt    = (o.date_order || '').slice(0, 7);
+    if (!dt) return;
+    const yr = parseInt(dt.slice(0,4)), mo = parseInt(dt.slice(5,7));
+    const key = `${pid}|${yr}|${mo}`;
+    if (!map[key]) map[key] = { pid, pname, yr, mo, total: 0, cnt: 0 };
+    map[key].total += parseFloat(o.amount_total||0) - parseFloat(o.amount_tax||0);
+    map[key].cnt++;
+  });
+
+  return Object.values(map).map(r => [r.pid, r.pname, r.yr, r.mo, r.total, r.cnt]);
+}
+
 exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
   try {
     const { fromStr, toStr, priorFrom, priorTo, mode } = JSON.parse(event.body);
     const uid = await getUid();
+    const fetchFn = mode === 'invoiced' ? fetchInvoicedPeriod : fetchOrdersPeriod;
 
-    let current = [], prior = [];
-
-    if (mode === 'invoiced') {
-      // Fetch invoice lines grouped by partner/year/month
-      const [invLines, priorInvLines] = await Promise.all([
-        odooCall(uid, 'account.move.line', 'search_read', [[
-          ['move_id.move_type', 'in', ['out_invoice', 'out_refund']],
-          ['move_id.state', '=', 'posted'],
-          ['move_id.invoice_date', '>=', fromStr],
-          ['move_id.invoice_date', '<=', toStr],
-          ['product_id', '!=', false],
-          ['partner_id', '!=', false],
-        ]], { fields: ['partner_id', 'price_subtotal', 'move_id'], limit: 10000 }),
-
-        odooCall(uid, 'account.move.line', 'search_read', [[
-          ['move_id.move_type', 'in', ['out_invoice', 'out_refund']],
-          ['move_id.state', '=', 'posted'],
-          ['move_id.invoice_date', '>=', priorFrom],
-          ['move_id.invoice_date', '<=', priorTo],
-          ['product_id', '!=', false],
-          ['partner_id', '!=', false],
-        ]], { fields: ['partner_id', 'price_subtotal', 'move_id'], limit: 10000 }),
-      ]);
-
-      // Also need invoice dates — fetch invoices separately
-      const allMoveIds = [...new Set([
-        ...invLines.map(l => Array.isArray(l.move_id) ? l.move_id[0] : l.move_id),
-        ...priorInvLines.map(l => Array.isArray(l.move_id) ? l.move_id[0] : l.move_id),
-      ])];
-
-      // Batch fetch move dates (in chunks of 200)
-      const moveDates = {};
-      const moveMoveTypes = {};
-      for (let i = 0; i < allMoveIds.length; i += 200) {
-        const chunk = allMoveIds.slice(i, i + 200);
-        const moves = await odooCall(uid, 'account.move', 'search_read',
-          [[['id', 'in', chunk]]],
-          { fields: ['id', 'invoice_date', 'move_type'], limit: 200 });
-        moves.forEach(m => {
-          moveDates[m.id] = m.invoice_date || '';
-          moveMoveTypes[m.id] = m.move_type || '';
-        });
-      }
-
-      // Aggregate: partner → year/month → total
-      function aggregateLines(lines) {
-        const map = {};
-        lines.forEach(l => {
-          const pid = Array.isArray(l.partner_id) ? l.partner_id[0] : l.partner_id;
-          const pname = Array.isArray(l.partner_id) ? l.partner_id[1] : '';
-          const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
-          const dt = moveDates[mid] || '';
-          if (!dt) return;
-          const yr = parseInt(dt.slice(0,4));
-          const mo = parseInt(dt.slice(5,7));
-          const isRefund = moveMoveTypes[mid] === 'out_refund';
-          const amt = isRefund ? -(l.price_subtotal || 0) : (l.price_subtotal || 0);
-          const key = pid + '|' + yr + '|' + mo;
-          if (!map[key]) map[key] = { pid, pname, yr, mo, total: 0, cnt: new Set() };
-          map[key].total += amt;
-          map[key].cnt.add(mid);
-        });
-        return Object.values(map).map(r => [r.pid, r.pname, r.yr, r.mo, r.total, r.cnt.size]);
-      }
-
-      current = aggregateLines(invLines);
-      prior   = aggregateLines(priorInvLines);
-
-    } else {
-      // Orders mode: sale_order + pos_order
-      const [soRows, posRows, priorSoRows, priorPosRows] = await Promise.all([
-        odooCall(uid, 'sale.order', 'search_read', [[
-          ['state', 'in', ['sale', 'done']],
-          ['date_order', '>=', fromStr + ' 00:00:00'],
-          ['date_order', '<=', toStr + ' 23:59:59'],
-        ]], { fields: ['partner_id', 'amount_untaxed', 'date_order'], limit: 2000 }),
-
-        odooCall(uid, 'pos.order', 'search_read', [[
-          ['state', 'in', ['done', 'invoiced', 'paid']],
-          ['date_order', '>=', fromStr + ' 00:00:00'],
-          ['date_order', '<=', toStr + ' 23:59:59'],
-          ['partner_id', '!=', false],
-        ]], { fields: ['partner_id', 'amount_total', 'amount_tax', 'date_order'], limit: 2000 }),
-
-        odooCall(uid, 'sale.order', 'search_read', [[
-          ['state', 'in', ['sale', 'done']],
-          ['date_order', '>=', priorFrom + ' 00:00:00'],
-          ['date_order', '<=', priorTo + ' 23:59:59'],
-        ]], { fields: ['partner_id', 'amount_untaxed', 'date_order'], limit: 2000 }),
-
-        odooCall(uid, 'pos.order', 'search_read', [[
-          ['state', 'in', ['done', 'invoiced', 'paid']],
-          ['date_order', '>=', priorFrom + ' 00:00:00'],
-          ['date_order', '<=', priorTo + ' 23:59:59'],
-          ['partner_id', '!=', false],
-        ]], { fields: ['partner_id', 'amount_total', 'amount_tax', 'date_order'], limit: 2000 }),
-      ]);
-
-      function aggregateOrders(soArr, posArr) {
-        const map = {};
-        soArr.forEach(o => {
-          const pid = Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id;
-          const pname = Array.isArray(o.partner_id) ? o.partner_id[1] : '';
-          const dt = (o.date_order || '').slice(0,10);
-          if (!dt) return;
-          const yr = parseInt(dt.slice(0,4)), mo = parseInt(dt.slice(5,7));
-          const key = pid+'|'+yr+'|'+mo;
-          if (!map[key]) map[key] = { pid, pname, yr, mo, total: 0, cnt: 0 };
-          map[key].total += parseFloat(o.amount_untaxed || 0);
-          map[key].cnt++;
-        });
-        posArr.forEach(o => {
-          const pid = Array.isArray(o.partner_id) ? o.partner_id[0] : o.partner_id;
-          const pname = Array.isArray(o.partner_id) ? o.partner_id[1] : '';
-          const dt = (o.date_order || '').slice(0,10);
-          if (!dt) return;
-          const yr = parseInt(dt.slice(0,4)), mo = parseInt(dt.slice(5,7));
-          const key = pid+'|'+yr+'|'+mo;
-          if (!map[key]) map[key] = { pid, pname, yr, mo, total: 0, cnt: 0 };
-          const exVat = parseFloat(o.amount_total||0) - parseFloat(o.amount_tax||0);
-          map[key].total += exVat;
-          map[key].cnt++;
-        });
-        return Object.values(map).map(r => [r.pid, r.pname, r.yr, r.mo, r.total, r.cnt]);
-      }
-
-      current = aggregateOrders(soRows, posRows);
-      prior   = aggregateOrders(priorSoRows, priorPosRows);
-    }
+    const [current, prior] = await Promise.all([
+      fetchFn(uid, fromStr, toStr),
+      fetchFn(uid, priorFrom, priorTo),
+    ]);
 
     return {
       statusCode: 200,
