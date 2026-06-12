@@ -154,11 +154,27 @@ exports.handler = async function(event) {
     // Using price_subtotal - (purchase_price * quantity) per line is the most accurate
     // method as it only counts GP on lines actually invoiced, not whole-SO margin.
 
-    const invoices = await odooCall(uid, 'account.move', 'search_read',
+    const allInvoices = await odooCall(uid, 'account.move', 'search_read',
       [[['move_type','in',['out_invoice','out_refund']],['state','=','posted'],
-        ['invoice_date','>=',monthStart],['invoice_date','<',tomorrow],
-        ['line_ids.account_id.code','not in',['491000','710000']]]],
+        ['invoice_date','>=',monthStart],['invoice_date','<',tomorrow]]],
       { fields: ['id','move_type','amount_untaxed'], limit: 2000 });
+
+    // Exclude rent/rates invoices (account codes 491000, 710000)
+    const rentLineIds = await odooCall(uid, 'account.move.line', 'search',
+      [[['move_id.move_type','in',['out_invoice','out_refund']],
+        ['move_id.state','=','posted'],
+        ['account_id.code','in',['491000','710000']],
+        ['move_id.invoice_date','>=',monthStart],
+        ['move_id.invoice_date','<',tomorrow]]],
+      { limit: 500 });
+    const rentLines = rentLineIds.length > 0
+      ? await odooCall(uid, 'account.move.line', 'search_read',
+          [[['id','in',rentLineIds]]],
+          { fields: ['move_id'], limit: 500 })
+      : [];
+    const excludedMoveIds = new Set(rentLines.map(l =>
+      Array.isArray(l.move_id) ? l.move_id[0] : l.move_id));
+    const invoices = allInvoices.filter(inv => !excludedMoveIds.has(inv.id));
 
     let salesInv = 0;
     const invoiceIds = [];
