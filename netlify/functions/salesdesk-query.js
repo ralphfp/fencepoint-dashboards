@@ -86,7 +86,8 @@ exports.handler = async function(event) {
       // POS orders today — invoiced, timber or commercial team
       odooCall(uid, 'pos.order', 'search_read',
         [[['date_order','>=',today+' 00:00:00'],['date_order','<',tomorrow+' 00:00:00'],
-          ['crm_team_id.name','in',['Timber','Commercial']],['state','=','invoiced']]],
+          ['crm_team_id.name','in',['Timber','Commercial']],['state','=','invoiced'],
+          ['lines.product_id.name','not like','Down Payment']]],
         { fields: ['amount_total','amount_tax','partner_id','crm_team_id'], limit: 200 }),
     ]);
 
@@ -127,12 +128,13 @@ exports.handler = async function(event) {
       }
     });
 
-    // Add POS orders today (deduped against sale orders)
+    // Add POS orders today (deduped against sale orders, exclude down payments)
     todayPOS.forEach(po => {
       const exVat = parseFloat(po.amount_total||0) - parseFloat(po.amount_tax||0);
       const team    = Array.isArray(po.crm_team_id) ? po.crm_team_id[1] : (po.crm_team_id||'');
       const partner = Array.isArray(po.partner_id)  ? po.partner_id[1]  : (po.partner_id||'');
       const key = team+'|'+partner+'|'+exVat.toFixed(2);
+      // Down payments already excluded at query level
       if (!saleOrderKeys[key]) {
         salesToday += exVat;
         if (team === 'Timber')        timberToday += exVat;
