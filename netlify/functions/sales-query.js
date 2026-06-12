@@ -156,7 +156,8 @@ exports.handler = async function(event) {
 
     const invoices = await odooCall(uid, 'account.move', 'search_read',
       [[['move_type','in',['out_invoice','out_refund']],['state','=','posted'],
-        ['invoice_date','>=',monthStart],['invoice_date','<',tomorrow]]],
+        ['invoice_date','>=',monthStart],['invoice_date','<',tomorrow],
+        ['line_ids.account_id.code','not in',['491000','710000']]]],
       { fields: ['id','move_type','amount_untaxed'], limit: 2000 });
 
     let salesInv = 0;
