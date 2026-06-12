@@ -155,25 +155,23 @@ exports.handler = async function(event) {
     // Using price_subtotal - (purchase_price * quantity) per line is the most accurate
     // method as it only counts GP on lines actually invoiced, not whole-SO margin.
 
-    // Fetch rent/rates lines to subtract from invoice totals (mixed invoices have both)
-    const rentLines = await odooCall(uid, 'account.move.line', 'search_read',
-      [[['account_id','in',[99,224]],
-        ['move_id.move_type','in',['out_invoice','out_refund']],
-        ['move_id.state','=','posted'],
-        ['move_id.invoice_date','>=',monthStart],
-        ['move_id.invoice_date','<',tomorrow]]],
-      { fields: ['move_id','price_subtotal'], limit: 500 });
-    // Build map of move_id -> total rent/rates amount to deduct
-    const rentDeductMap = {};
-    rentLines.forEach(l => {
-      const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
-      rentDeductMap[mid] = (rentDeductMap[mid]||0) + (l.price_subtotal||0);
-    });
-
+    // Fetch invoices first, then fetch rent/rates lines only for those invoice IDs
     const invoices = await odooCall(uid, 'account.move', 'search_read',
       [[['move_type','in',['out_invoice','out_refund']],['state','=','posted'],
         ['invoice_date','>=',monthStart],['invoice_date','<',tomorrow]]],
       { fields: ['id','move_type','amount_untaxed','invoice_date'], limit: 2000 });
+
+    const allInvIds = invoices.map(i => i.id);
+    const rentDeductMap = {};
+    if (allInvIds.length > 0) {
+      const rentLines = await odooCall(uid, 'account.move.line', 'search_read',
+        [[['account_id','in',[99,224]],['move_id','in',allInvIds]]],
+        { fields: ['move_id','price_subtotal'], limit: 1000 });
+      rentLines.forEach(l => {
+        const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
+        rentDeductMap[mid] = (rentDeductMap[mid]||0) + (l.price_subtotal||0);
+      });
+    }
 
     let salesInv = 0, salesInvToday = 0;
     const invoiceIds = [], invoiceIdsToday = [];
