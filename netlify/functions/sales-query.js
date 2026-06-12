@@ -86,7 +86,8 @@ exports.handler = async function(event) {
       // POS orders today — invoiced, timber or commercial team
       odooCall(uid, 'pos.order', 'search_read',
         [[['date_order','>=',today+' 00:00:00'],['date_order','<',tomorrow+' 00:00:00'],
-          ['crm_team_id.name','in',['Timber','Commercial']],['state','=','invoiced']]],
+          ['crm_team_id.name','in',['Timber','Commercial']],['state','=','invoiced'],
+          ['lines.product_id.name','not like','Down Payment']]],
         { fields: ['amount_total','amount_tax','partner_id','crm_team_id'], limit: 200 }),
     ]);
 
