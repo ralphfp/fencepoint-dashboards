@@ -90,6 +90,7 @@ async function fetchInvoicedPeriod(uid, fromStr, toStr) {
       ['invoice_date', '>=', fromStr],
       ['invoice_date', '<=', toStr],
       ['partner_id', '!=', false],
+    ['line_ids.account_id.code', 'not in', ['491000', '710000']],
     ],
     ['partner_id', 'commercial_partner_id', 'invoice_date', 'amount_untaxed', 'move_type']
   );
@@ -177,10 +178,31 @@ exports.handler = async function(event) {
       fetchFn(uid, priorFrom, priorTo),
     ]);
 
+    // Fetch salesperson for all unique commercial partner IDs
+    const allPids = [...new Set([
+      ...current.map(r => r[0]),
+      ...prior.map(r => r[0]),
+    ])];
+
+    const spMap = {};
+    if (allPids.length > 0) {
+      // Batch in chunks of 500
+      for (let i = 0; i < allPids.length; i += 500) {
+        const chunk = allPids.slice(i, i + 500);
+        const partners = await odooCall(uid, 'res.partner', 'search_read',
+          [[['id', 'in', chunk]]],
+          { fields: ['id', 'user_id'], limit: 500 });
+        partners.forEach(p => {
+          const sp = Array.isArray(p.user_id) ? p.user_id[1] : null;
+          if (sp) spMap[p.id] = sp;
+        });
+      }
+    }
+
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-      body: JSON.stringify({ current, prior }),
+      body: JSON.stringify({ current, prior, spMap }),
     };
   } catch(err) {
     return {
