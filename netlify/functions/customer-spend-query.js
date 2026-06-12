@@ -130,6 +130,7 @@ async function fetchOrdersPeriod(uid, fromStr, toStr) {
         ['date_order', '>=', fromStr + ' 00:00:00'],
         ['date_order', '<=', toStr + ' 23:59:59'],
         ['partner_id', '!=', false],
+        ['lines.product_id.name', 'not like', 'Down Payment'],
       ],
       ['partner_id', 'amount_total', 'amount_tax', 'date_order']
     ),
