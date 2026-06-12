@@ -90,13 +90,25 @@ async function fetchInvoicedPeriod(uid, fromStr, toStr) {
       ['invoice_date', '>=', fromStr],
       ['invoice_date', '<=', toStr],
       ['partner_id', '!=', false],
-    ['line_ids.account_id.code', 'not in', ['491000', '710000']],
     ],
-    ['partner_id', 'commercial_partner_id', 'invoice_date', 'amount_untaxed', 'move_type']
+    ['partner_id', 'commercial_partner_id', 'invoice_date', 'amount_untaxed', 'move_type', 'id']
   );
 
+  // Exclude rent/rates invoices post-fetch (account codes 491000, 710000)
+  const rentLineIds2 = await odooCall(uid, 'account.move.line', 'search',
+    [[['move_id','in', invoices.map(i=>i.id)],
+      ['account_id.code','in',['491000','710000']]]],
+    { limit: 500 });
+  const rentLines2 = rentLineIds2.length > 0
+    ? await odooCall(uid, 'account.move.line', 'search_read',
+        [[['id','in',rentLineIds2]]],
+        { fields: ['move_id'], limit: 500 })
+    : [];
+  const excludedIds = new Set(rentLines2.map(l => Array.isArray(l.move_id) ? l.move_id[0] : l.move_id));
+  const filteredInvoices = invoices.filter(inv => !excludedIds.has(inv.id));
+
   const map = {};
-  invoices.forEach(inv => {
+  filteredInvoices.forEach(inv => {
     // Use commercial_partner_id so contacts roll up to parent company
     const pid   = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[0] : (Array.isArray(inv.partner_id) ? inv.partner_id[0] : inv.partner_id);
     const pname = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[1] : (Array.isArray(inv.partner_id) ? inv.partner_id[1] : '');
