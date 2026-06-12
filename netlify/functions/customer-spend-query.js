@@ -94,16 +94,10 @@ async function fetchInvoicedPeriod(uid, fromStr, toStr) {
     ['partner_id', 'commercial_partner_id', 'invoice_date', 'amount_untaxed', 'move_type', 'id']
   );
 
-  // Exclude rent/rates invoices post-fetch (account codes 491000, 710000)
-  const rentLineIds2 = await odooCall(uid, 'account.move.line', 'search',
-    [[['move_id','in', invoices.map(i=>i.id)],
-      ['account_id.code','in',['491000','710000']]]],
-    { limit: 500 });
-  const rentLines2 = rentLineIds2.length > 0
-    ? await odooCall(uid, 'account.move.line', 'search_read',
-        [[['id','in',rentLineIds2]]],
-        { fields: ['move_id'], limit: 500 })
-    : [];
+  // Exclude rent/rates invoices (account_id 99=491000 Rental, 224=710000 Rates)
+  const rentLines2 = await odooCall(uid, 'account.move.line', 'search_read',
+    [[['account_id','in',[99,224]],['move_id','in',invoices.map(i=>i.id)]]],
+    { fields: ['move_id'], limit: 500 });
   const excludedIds = new Set(rentLines2.map(l => Array.isArray(l.move_id) ? l.move_id[0] : l.move_id));
   const filteredInvoices = invoices.filter(inv => !excludedIds.has(inv.id));
 
