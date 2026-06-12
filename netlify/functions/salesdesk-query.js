@@ -155,29 +155,33 @@ exports.handler = async function(event) {
     // Using price_subtotal - (purchase_price * quantity) per line is the most accurate
     // method as it only counts GP on lines actually invoiced, not whole-SO margin.
 
-    // Fetch rent/rates invoice IDs to exclude (account_id 99=491000 Rental, 224=710000 Rates)
-    const rentMoveLines = await odooCall(uid, 'account.move.line', 'search_read',
+    // Fetch rent/rates lines to subtract from invoice totals (mixed invoices have both)
+    const rentLines = await odooCall(uid, 'account.move.line', 'search_read',
       [[['account_id','in',[99,224]],
         ['move_id.move_type','in',['out_invoice','out_refund']],
         ['move_id.state','=','posted'],
         ['move_id.invoice_date','>=',monthStart],
         ['move_id.invoice_date','<',tomorrow]]],
-      { fields: ['move_id'], limit: 500 });
-    const excludedMoveIds = new Set(rentMoveLines.map(l =>
-      Array.isArray(l.move_id) ? l.move_id[0] : l.move_id));
+      { fields: ['move_id','price_subtotal'], limit: 500 });
+    // Build map of move_id -> total rent/rates amount to deduct
+    const rentDeductMap = {};
+    rentLines.forEach(l => {
+      const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
+      rentDeductMap[mid] = (rentDeductMap[mid]||0) + (l.price_subtotal||0);
+    });
 
-    const invoicesRaw = await odooCall(uid, 'account.move', 'search_read',
+    const invoices = await odooCall(uid, 'account.move', 'search_read',
       [[['move_type','in',['out_invoice','out_refund']],['state','=','posted'],
         ['invoice_date','>=',monthStart],['invoice_date','<',tomorrow]]],
       { fields: ['id','move_type','amount_untaxed','invoice_date'], limit: 2000 });
-    const invoices = invoicesRaw.filter(inv => !excludedMoveIds.has(inv.id));
 
     let salesInv = 0, salesInvToday = 0;
     const invoiceIds = [], invoiceIdsToday = [];
     const refundIds  = [], refundIdsToday  = [];
 
     invoices.forEach(inv => {
-      const amt     = inv.amount_untaxed || 0;
+      const rentDeduct = rentDeductMap[inv.id] || 0;
+      const amt     = (inv.amount_untaxed || 0) - rentDeduct;
       const invDate = (inv.invoice_date || '').slice(0, 10);
       const isToday = invDate === today;
       if (inv.move_type === 'out_invoice') {
