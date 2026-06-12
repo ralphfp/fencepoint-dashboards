@@ -123,6 +123,26 @@ body {
   grid-template-columns: repeat(4, 1fr);
   gap: 4px;
 }
+.gppct-tile {
+  background: var(--orange);
+  border-radius: 8px;
+  padding: 8px 6px;
+  text-align: center;
+}
+.gppct-lbl {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+  color: rgba(255,255,255,.85);
+  margin-bottom: 4px;
+}
+.gppct-val {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1;
+}
 .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .gauge-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); text-align: center; }
 
@@ -180,6 +200,10 @@ body {
 .rep-connect-rate.zero  { color: var(--muted); }
 .rep-outstanding { font-size: 10px; color: var(--muted); }
 .rep-outstanding span { color: var(--orange); font-weight: 700; }
+.prosp-input-wrap { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.prosp-input-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+.prosp-input { padding: 8px 10px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 16px; font-weight: 700; width: 100%; outline: none; font-family: inherit; }
+.prosp-input:focus { border-color: var(--orange); }
 
 /* ── Activity totals ── */
 .act-totals {
@@ -337,6 +361,14 @@ body {
           <div id="dw-gi"></div>
         </div>
       </div>
+
+      <!-- GP% strip — one per column -->
+      <div class="gauge-grid" style="margin-top:4px;gap:4px;">
+        <div class="gppct-tile"><div class="gppct-lbl">GP% Today</div><div class="gppct-val" id="gppct-today">—</div></div>
+        <div class="gppct-tile"><div class="gppct-lbl">GP% Inv. Today</div><div class="gppct-val" id="gppct-inv-today">—</div></div>
+        <div class="gppct-tile"><div class="gppct-lbl">GP% MTD</div><div class="gppct-val" id="gppct-mtd">—</div></div>
+        <div class="gppct-tile"><div class="gppct-lbl">GP% Inv. MTD</div><div class="gppct-val" id="gppct-inv-mtd">—</div></div>
+      </div>
     </div>
 
     <!-- Right: Activity -->
@@ -381,6 +413,13 @@ body {
 
       <!-- Rep grid inside activity card -->
       <div class="rep-grid" id="rep-grid" style="margin-top:12px;"></div>
+
+      <!-- Prospecting manual entry — inline under rep cards -->
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);white-space:nowrap;">Prospecting</div>
+        <div id="prospecting-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;"></div>
+        <button id="prospecting-card" onclick="applyProspecting()" style="padding:6px 14px;border-radius:7px;border:none;background:#F37032;color:#fff;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;">Apply</button>
+      </div>
 
     </div>
 
@@ -644,6 +683,48 @@ function renderActivity(proc) {
 
 
 
+// ── Prospecting ──────────────────────────────────────────────────────────────
+var prospectingState = {};
+PROSPECTING_REPS.forEach(function(rep) { prospectingState[rep] = {total:0, connected:0}; });
+
+function renderProspectingGrid() {
+  var grid = document.getElementById("prospecting-grid");
+  if (!grid) return;
+  grid.innerHTML = PROSPECTING_REPS.map(function(rep) {
+    var cfg = REP_CONFIG[rep];
+    var vals = prospectingState[rep] || {total:0, connected:0};
+    var connRate = vals.total > 0 ? Math.round(vals.connected / vals.total * 100) : 0;
+    var rateColor = connRate > 0 ? "#16a34a" : "var(--muted)";
+    return '<div style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;">' +
+      '<div class="avatar" style="background:' + cfg.bg + ';color:' + cfg.color + ';width:30px;height:30px;font-size:10px;flex-shrink:0;">' + cfg.initials + '</div>' +
+      '<div style="font-size:11px;font-weight:700;color:var(--slate);white-space:nowrap;min-width:70px;">' + rep.split(" ")[0] + '</div>' +
+      '<div style="display:flex;align-items:center;gap:6px;">' +
+        '<span style="font-size:10px;color:var(--muted);">Total</span>' +
+        '<input type="number" min="0" data-rep="' + rep + '" data-field="total" value="' + vals.total + '" oninput="updateProspecting(this)" style="width:52px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-weight:700;color:' + cfg.color + ';text-align:center;outline:none;" />' +
+        '<span style="font-size:10px;color:var(--muted);">Conn.</span>' +
+        '<input type="number" min="0" data-rep="' + rep + '" data-field="connected" value="' + vals.connected + '" oninput="updateProspecting(this)" style="width:52px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-weight:700;color:#16a34a;text-align:center;outline:none;" />' +
+        '<span style="font-size:11px;font-weight:700;color:' + rateColor + ';min-width:40px;" id="prosp-rate-' + rep.replace(/ /g,"-") + '">' + connRate + '%</span>' +
+      '</div>' +
+    '</div>';
+  }).join("");
+}
+
+function updateProspecting(input) {
+  var rep = input.dataset.rep;
+  var field = input.dataset.field;
+  if (!prospectingState[rep]) prospectingState[rep] = {total:0, connected:0};
+  prospectingState[rep][field] = parseInt(input.value) || 0;
+  var vals = prospectingState[rep];
+  var rate = vals.total > 0 ? Math.round(vals.connected / vals.total * 100) : 0;
+  var rateEl = document.getElementById("prosp-rate-" + rep.replace(/ /g,"-"));
+  if (rateEl) { rateEl.textContent = rate + "% connect"; rateEl.style.color = rate > 0 ? "#16a34a" : "var(--muted)"; }
+}
+
+function applyProspecting() {
+  var btn = document.querySelector("#prospecting-card button");
+  if (btn) { btn.textContent = "Saved ✓"; btn.style.background = "#16a34a"; setTimeout(function(){ btn.textContent = "Apply"; btn.style.background = "#F37032"; }, 1500); }
+}
+
 async function load() {
   var today      = getToday();
   var monthStart = getMonthStart(today);
@@ -662,6 +743,7 @@ async function load() {
   var mtdGPTarget    = MONTH_GP_TARGET    / total * elapsed;
 
   initDials();
+  renderProspectingGrid();
 
   var status = document.getElementById("status-bar");
   status.className = "status-bar";
@@ -698,6 +780,16 @@ async function load() {
     setDial("dw-git","#A0A0A0", salesRes.invoices.gpInvToday,     dailyGP);
     setDial("dw-gm", "#A0A0A0", gpMtd,                            mtdGPTarget);
     setDial("dw-gi", "#A0A0A0", salesRes.invoices.gpInv,          mtdGPTarget);
+
+    // ── GP% strips ──
+    var salesInvToday = salesRes.invoices.salesInvToday || 0;
+    var gpInvToday    = salesRes.invoices.gpInvToday    || 0;
+    var salesInv      = salesRes.invoices.salesInv      || 0;
+    var gpInv         = salesRes.invoices.gpInv         || 0;
+    set("gppct-today",     fmtPct(salesToday, gpToday));
+    set("gppct-inv-today", fmtPct(salesInvToday, gpInvToday));
+    set("gppct-mtd",       fmtPct(salesMtd, gpMtd));
+    set("gppct-inv-mtd",   fmtPct(salesInv, gpInv));
 
     // ── Business performance bar (from activity bizData) ──
     var bizData = salesRes.bizData || {};
