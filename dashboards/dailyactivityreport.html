@@ -148,7 +148,7 @@ async function fetchBusinessData(dateTo) {
     runQuery(`SELECT [team_id_label],[amount_untaxed],[partner_id_label] FROM [User].[Odoo].[sale_order] WHERE [date_order] >= '${dateTo}' AND [date_order] < '${d1}' AND [state] IN ('sale','done') LIMIT 500`).catch(() => []),
     runQuery(`SELECT [amount_untaxed] FROM [User].[Odoo].[sale_order] WHERE [date_order] >= '${monthStart}' AND [date_order] < '${d1}' AND [state] IN ('sale','done') LIMIT 2000`).catch(() => []),
     runQuery(`SELECT [User].[Odoo].[sale_order].[id],[User].[Odoo].[sale_order].[margin] FROM [User].[Odoo].[account_move] INNER JOIN [User].[Odoo].[sale_order] ON [User].[Odoo].[account_move].[invoice_origin] = [User].[Odoo].[sale_order].[name] WHERE [User].[Odoo].[account_move].[move_type] = 'out_invoice' AND [User].[Odoo].[account_move].[state] = 'posted' AND [User].[Odoo].[account_move].[invoice_date] >= '${monthStart}' AND [User].[Odoo].[account_move].[invoice_date] < '${d1}' LIMIT 2000`).catch(() => []),
-    runQuery(`SELECT [amount_total],[amount_tax],[partner_id_label],[crm_team_id_label] FROM [User].[Odoo].[pos_order] WHERE [date_order] >= '${dateTo}' AND [date_order] < '${d1}' AND [crm_team_id_label] IN ('Timber','Commercial') AND [state] = 'invoiced' LIMIT 200`).catch(() => []),
+    runQuery(`SELECT [amount_total],[amount_tax],[partner_id_label],[crm_team_id_label] FROM [User].[Odoo].[pos_order] WHERE [date_order] >= '${dateTo}' AND [date_order] < '${d1}' AND [crm_team_id_label] IN ('Timber','Commercial') AND [state] = 'invoiced' AND [id] NOT IN (SELECT [order_id] FROM [User].[Odoo].[pos_order_line] WHERE [full_product_name] LIKE '%Down Payment%') LIMIT 200`).catch(() => []),
   ]);
 
   const saleOrderKeys = new Set(
