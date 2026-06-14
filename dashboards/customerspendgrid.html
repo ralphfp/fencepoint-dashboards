@@ -454,19 +454,40 @@ async function render(){
     Object.keys(spMap).forEach(pid=>{ SP[+pid]=spMap[pid]; });
   }catch(e){ showError(e.message); return; }
 
-  let custs=buildCusts(raw26,visMonths).filter(c=>
-    c.total>=ms && (!sr||c.name.toLowerCase().includes(sr)) && (!spf||(SP[c.pid]||'')===spf)
-  );
-  custs.sort((a,b)=>b.total-a.total);
+  // Build current period customers
+  const custMap={};
+  buildCusts(raw26,visMonths).forEach(c=>{ custMap[c.pid]=c; });
 
+  // Build prior year customers and add any that don't exist in current period
   const pyMap={};
-  buildCusts(raw25,priorMonths).forEach(x=>{ pyMap[+x.pid]=x; });
+  buildCusts(raw25,priorMonths).forEach(x=>{
+    pyMap[+x.pid]=x;
+    if(!custMap[x.pid]){
+      // Customer spent in prior year but not current — add with zero current spend
+      custMap[x.pid]={
+        pid:x.pid, name:x.name,
+        monthly:{}, total:0, invCount:0,
+        pyTotal:x.total, pyMonthly:x.monthly
+      };
+    }
+  });
+
+  // Attach prior year data and score all customers
+  let custs=Object.values(custMap);
   custs.forEach(c=>{
     const py=pyMap[+c.pid];
-    c.pyTotal=py?py.total:0; c.pyMonthly=py?py.monthly:{};
+    if(c.pyTotal===undefined){ c.pyTotal=py?py.total:0; c.pyMonthly=py?py.monthly:{}; }
     const {st,signals,score}=scoreCustomer(c,visMonths);
     c.st=st; c.signals=signals; c.score=score;
   });
+
+  // Apply filters — min spend applies to current OR prior year total
+  custs=custs.filter(c=>
+    Math.max(c.total,c.pyTotal)>=ms &&
+    (!sr||c.name.toLowerCase().includes(sr)) &&
+    (!spf||(SP[c.pid]||'')===spf)
+  );
+  custs.sort((a,b)=>b.total-a.total);
   if(sf!=='all') custs=custs.filter(c=>c.st===sf);
 
   const totals={};
