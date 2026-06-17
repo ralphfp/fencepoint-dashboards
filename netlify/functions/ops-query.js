@@ -91,9 +91,21 @@ exports.handler = async function(event) {
         ['invoice_date', '<=', dateTo],
       ];
       const invoices = await odooCall(uid, 'account.move', 'search_read', [invDomain],
-        { fields: ['invoice_origin', 'amount_untaxed'], limit: 2000 });
+        { fields: ['id', 'invoice_origin'], limit: 2000 });
 
-      const totalRevenue = invoices.reduce((s, i) => s + (i.amount_untaxed || 0), 0);
+      // Sum only revenue account lines (4xxxx excl rent) — matches Odoo Invoice Analysis
+      const invIds = invoices.map(i => i.id);
+      const revLines = invIds.length > 0
+        ? await odooCall(uid, 'account.move.line', 'search_read',
+            [[['move_id','in',invIds],['account_id.code','like','4'],['account_id','not in',[99,224]]]],
+            { fields: ['move_id','price_subtotal'], limit: 10000 })
+        : [];
+      const invRevMap = {};
+      revLines.forEach(l => {
+        const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
+        invRevMap[mid] = (invRevMap[mid]||0) + (l.price_subtotal||0);
+      });
+      const totalRevenue = invoices.reduce((s, i) => s + (invRevMap[i.id]||0), 0);
       const origins = [...new Set(invoices.map(i => i.invoice_origin).filter(o => o && o.trim()))];
 
       let totalGP = 0;
