@@ -81,14 +81,14 @@ exports.handler = async function(event) {
     const [orders, todayPOS] = await Promise.all([
       odooCall(uid, 'sale.order', 'search_read',
         [[['state','in',['sale','done']],['date_order','>=',monthStart+' 00:00:00'],['date_order','<',tomorrow+' 00:00:00']]],
-        { fields: ['id','date_order','team_id','amount_untaxed','partner_id','margin'], limit: 2000 }),
+        { fields: ['id','name','date_order','team_id','amount_untaxed','partner_id','margin'], limit: 2000 }),
 
       // POS orders today — invoiced, timber or commercial team
       odooCall(uid, 'pos.order', 'search_read',
         [[['date_order','>=',today+' 00:00:00'],['date_order','<',tomorrow+' 00:00:00'],
           ['crm_team_id.name','in',['Timber','Commercial']],['state','=','invoiced'],
           ['lines.product_id.name','not like','Down Payment']]],
-        { fields: ['amount_total','amount_tax','partner_id','crm_team_id'], limit: 200 }),
+        { fields: ['name','amount_total','amount_tax','partner_id','crm_team_id'], limit: 200 }),
     ]);
 
     const orderIds = orders.map(o => o.id);
@@ -102,14 +102,16 @@ exports.handler = async function(event) {
     let salesToday=0, costToday=0, salesMtd=0, costMtd=0;
     let timberToday=0, commToday=0, timberMtd=0, commMtd=0;
 
-    // Build dedup key set from today's sale orders (to avoid double-counting POS)
-    const saleOrderKeys = {};
+    // Build dedup set from today's sale order names (SO/xxxxx)
+    // POS orders created from SOs share the same name — use this as dedup key
+    const saleOrderNames = new Set();
+    const saleOrderAmtKeys = {};
     orders.forEach(o => {
       if ((o.date_order||'').slice(0,10) === today) {
+        if (o.name) saleOrderNames.add(o.name);
         const team = Array.isArray(o.team_id) ? o.team_id[1] : (o.team_id||'');
-        const partner = Array.isArray(o.partner_id) ? o.partner_id[1] : (o.partner_id||'');
         const amt = parseFloat(o.amount_untaxed||0).toFixed(2);
-        saleOrderKeys[team+'|'+partner+'|'+amt] = true;
+        saleOrderAmtKeys[team+'|'+amt] = true;
       }
     });
 
@@ -128,18 +130,17 @@ exports.handler = async function(event) {
       }
     });
 
-    // Add POS orders today (deduped against sale orders, exclude down payments)
+    // Add POS orders today — dedup by SO name first, then by team+amount
     todayPOS.forEach(po => {
-      const exVat = parseFloat(po.amount_total||0) - parseFloat(po.amount_tax||0);
-      const team    = Array.isArray(po.crm_team_id) ? po.crm_team_id[1] : (po.crm_team_id||'');
-      const partner = Array.isArray(po.partner_id)  ? po.partner_id[1]  : (po.partner_id||'');
-      const key = team+'|'+partner+'|'+exVat.toFixed(2);
-      // Down payments already excluded at query level
-      if (!saleOrderKeys[key]) {
-        salesToday += exVat;
-        if (team === 'Timber')        timberToday += exVat;
-        else if (team === 'Commercial') commToday += exVat;
-      }
+      const exVat  = parseFloat(po.amount_total||0) - parseFloat(po.amount_tax||0);
+      const team   = Array.isArray(po.crm_team_id) ? po.crm_team_id[1] : (po.crm_team_id||'');
+      const poName = po.name || '';
+      const amtKey = team+'|'+exVat.toFixed(2);
+      // Skip if POS name matches a confirmed SO name, or same team+amount exists
+      if (saleOrderNames.has(poName) || saleOrderAmtKeys[amtKey]) return;
+      salesToday += exVat;
+      if (team === 'Timber')          timberToday += exVat;
+      else if (team === 'Commercial') commToday   += exVat;
     });
 
     // GP Today/MTD — use sale_order.margin directly (matches Odoo's own report)
@@ -155,32 +156,44 @@ exports.handler = async function(event) {
     // Using price_subtotal - (purchase_price * quantity) per line is the most accurate
     // method as it only counts GP on lines actually invoiced, not whole-SO margin.
 
-    // Fetch invoices first, then fetch rent/rates lines only for those invoice IDs
+    // Fetch invoices to get IDs and dates
     const invoices = await odooCall(uid, 'account.move', 'search_read',
       [[['move_type','in',['out_invoice','out_refund']],['state','=','posted'],
         ['invoice_date','>=',monthStart],['invoice_date','<',tomorrow]]],
-      { fields: ['id','move_type','amount_untaxed','invoice_date'], limit: 2000 });
+      { fields: ['id','move_type','invoice_date','invoice_origin'], limit: 2000 });
 
+    const invoiceDateMap  = {};
+    const invoiceMoveType = {};
+    invoices.forEach(inv => {
+      invoiceDateMap[inv.id]  = (inv.invoice_date||'').slice(0,10);
+      invoiceMoveType[inv.id] = inv.move_type;
+    });
     const allInvIds = invoices.map(i => i.id);
-    const rentDeductMap = {};
-    if (allInvIds.length > 0) {
-      const rentLines = await odooCall(uid, 'account.move.line', 'search_read',
-        [[['account_id','in',[99,224]],['move_id','in',allInvIds]]],
-        { fields: ['move_id','price_subtotal'], limit: 1000 });
-      rentLines.forEach(l => {
-        const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
-        rentDeductMap[mid] = (rentDeductMap[mid]||0) + (l.price_subtotal||0);
-      });
-    }
+
+    // Sum only revenue account lines (4xxxx) excluding rent (99=491000, 224=710000)
+    // This matches Odoo's Invoice Analysis report methodology exactly
+    const revLines = allInvIds.length > 0
+      ? await odooCall(uid, 'account.move.line', 'search_read',
+          [[['move_id','in',allInvIds],
+            ['account_id.code','like','4'],
+            ['account_id','not in',[99,224]]]],
+          { fields: ['move_id','price_subtotal'], limit: 10000 })
+      : [];
+
+    // Aggregate revenue by invoice
+    const invRevMap = {};
+    revLines.forEach(l => {
+      const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
+      invRevMap[mid] = (invRevMap[mid]||0) + (l.price_subtotal||0);
+    });
 
     let salesInv = 0, salesInvToday = 0;
     const invoiceIds = [], invoiceIdsToday = [];
     const refundIds  = [], refundIdsToday  = [];
 
     invoices.forEach(inv => {
-      const rentDeduct = rentDeductMap[inv.id] || 0;
-      const amt     = (inv.amount_untaxed || 0) - rentDeduct;
-      const invDate = (inv.invoice_date || '').slice(0, 10);
+      const amt     = invRevMap[inv.id] || 0;
+      const invDate = invoiceDateMap[inv.id];
       const isToday = invDate === today;
       if (inv.move_type === 'out_invoice') {
         salesInv += amt;
@@ -197,26 +210,52 @@ exports.handler = async function(event) {
     const allInvoiceIds = [...invoiceIds, ...refundIds];
 
     if (allInvoiceIds.length > 0) {
-      // Fetch all invoice lines that have a purchase_price (i.e. product lines)
-      const invLines = await odooCall(uid, 'account.move.line', 'search_read',
-        [[['move_id','in',allInvoiceIds],['purchase_price','>',0]]],
-        { fields: ['move_id','price_subtotal','purchase_price','quantity'], limit: 10000 });
+      // Fetch invoices with their invoice_origin to link back to sale orders
+      const invWithOrigin = await odooCall(uid, 'account.move', 'search_read',
+        [[['id','in',allInvoiceIds]]],
+        { fields: ['id','invoice_origin','move_type','amount_untaxed'], limit: 2000 });
 
-      // Build sets for fast invoice/refund lookup
+      // Extract sale order names from invoice_origin
+      // Clean origin — strip trailing " REFUND", spaces etc, include UK1SO- format
+      const cleanOrigin = o => o ? o.replace(/\s*(REFUND|refund).*$/, '').trim() : null;
+      const soNames = [...new Set(
+        invWithOrigin.map(i => cleanOrigin(i.invoice_origin))
+          .filter(o => o && (o.startsWith('SO/') || o.startsWith('UK1SO-')))
+      )];
+
+      // Fetch sale order margins
+      const soMarginMap = {};
+      const soRevenueMap = {};
+      if (soNames.length > 0) {
+        const soOrders = await odooCall(uid, 'sale.order', 'search_read',
+          [[['name','in',soNames]]],
+          { fields: ['name','margin','amount_untaxed'], limit: 2000 });
+        soOrders.forEach(so => {
+          soMarginMap[so.name]  = parseFloat(so.margin||0);
+          soRevenueMap[so.name] = parseFloat(so.amount_untaxed||0);
+        });
+      }
+
+      // Calculate GP for each invoice using SO margin proportional to invoice amount
       const invoiceIdSet      = new Set(invoiceIds);
       const refundIdSet       = new Set(refundIds);
       const invoiceIdSetToday = new Set(invoiceIdsToday);
       const refundIdSetToday  = new Set(refundIdsToday);
 
-      invLines.forEach(line => {
-        const mid    = Array.isArray(line.move_id) ? line.move_id[0] : line.move_id;
-        const lineGp = (line.price_subtotal || 0) - (line.purchase_price || 0) * (line.quantity || 0);
+      invWithOrigin.forEach(inv => {
+        const soName   = cleanOrigin(inv.invoice_origin) || '';
+        const soMargin = soMarginMap[soName]  || 0;
+        const soRev    = soRevenueMap[soName] || 0;
+        const invRev   = parseFloat(inv.amount_untaxed||0);
+        // GP = SO margin × (invoice revenue / SO revenue) to handle partial invoicing
+        const gpShare  = soRev > 0 ? soMargin * (invRev / soRev) : 0;
+        const mid = inv.id;
         if (invoiceIdSet.has(mid)) {
-          gpInv += lineGp;
-          if (invoiceIdSetToday.has(mid)) gpInvToday += lineGp;
+          gpInv += gpShare;
+          if (invoiceIdSetToday.has(mid)) gpInvToday += gpShare;
         } else if (refundIdSet.has(mid)) {
-          gpInv -= lineGp;
-          if (refundIdSetToday.has(mid)) gpInvToday -= lineGp;
+          gpInv -= gpShare;
+          if (refundIdSetToday.has(mid)) gpInvToday -= gpShare;
         }
       });
     }
