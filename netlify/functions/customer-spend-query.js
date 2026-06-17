@@ -102,7 +102,7 @@ async function fetchInvoicedPeriod(uid, fromStr, toStr) {
     for (let i = 0; i < allInvIds.length; i += 500) {
       const chunk = allInvIds.slice(i, i + 500);
       const revLines = await odooCall(uid, 'account.move.line', 'search_read',
-        [[['move_id','in',chunk],['account_id.code','like','4'],['account_id','not in',[99,224]]]],
+        [[['move_id','in',chunk],['account_id','in',[45, 46, 307, 280, 278, 293, 205]]]],
         { fields: ['move_id','price_subtotal'], limit: 5000 });
       revLines.forEach(l => {
         const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
