@@ -91,18 +91,28 @@ async function fetchInvoicedPeriod(uid, fromStr, toStr) {
       ['invoice_date', '<=', toStr],
       ['partner_id', '!=', false],
     ],
-    ['partner_id', 'commercial_partner_id', 'invoice_date', 'amount_untaxed', 'move_type', 'id']
+    ['id', 'partner_id', 'commercial_partner_id', 'invoice_date', 'move_type']
   );
 
-  // Exclude rent/rates invoices (account_id 99=491000 Rental, 224=710000 Rates)
-  const rentLines2 = await odooCall(uid, 'account.move.line', 'search_read',
-    [[['account_id','in',[99,224]],['move_id','in',invoices.map(i=>i.id)]]],
-    { fields: ['move_id'], limit: 500 });
-  const excludedIds = new Set(rentLines2.map(l => Array.isArray(l.move_id) ? l.move_id[0] : l.move_id));
-  const filteredInvoices = invoices.filter(inv => !excludedIds.has(inv.id));
+  // Sum only 4xxxx revenue account lines excl rent — matches Odoo Invoice Analysis
+  const allInvIds = invoices.map(i => i.id);
+  const invRevMap = {};
+  if (allInvIds.length > 0) {
+    // Batch in chunks of 500 to avoid domain limits
+    for (let i = 0; i < allInvIds.length; i += 500) {
+      const chunk = allInvIds.slice(i, i + 500);
+      const revLines = await odooCall(uid, 'account.move.line', 'search_read',
+        [[['move_id','in',chunk],['account_id.code','like','4'],['account_id','not in',[99,224]]]],
+        { fields: ['move_id','price_subtotal'], limit: 5000 });
+      revLines.forEach(l => {
+        const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
+        invRevMap[mid] = (invRevMap[mid]||0) + (l.price_subtotal||0);
+      });
+    }
+  }
 
   const map = {};
-  filteredInvoices.forEach(inv => {
+  invoices.forEach(inv => {
     // Use commercial_partner_id so contacts roll up to parent company
     const pid   = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[0] : (Array.isArray(inv.partner_id) ? inv.partner_id[0] : inv.partner_id);
     const pname = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[1] : (Array.isArray(inv.partner_id) ? inv.partner_id[1] : '');
@@ -110,11 +120,12 @@ async function fetchInvoicedPeriod(uid, fromStr, toStr) {
     if (!dt) return;
     const yr = parseInt(dt.slice(0,4)), mo = parseInt(dt.slice(5,7));
     const isRefund = inv.move_type === 'out_refund';
-    const amt = isRefund ? -(inv.amount_untaxed||0) : (inv.amount_untaxed||0);
+    const lineRev  = invRevMap[inv.id] || 0;
+    const amt      = isRefund ? -lineRev : lineRev;
     const key = `${pid}|${yr}|${mo}`;
     if (!map[key]) map[key] = { pid, pname, yr, mo, total: 0, cnt: 0 };
     map[key].total += amt;
-    if (!isRefund) map[key].cnt++;
+    if (!isRefund && lineRev > 0) map[key].cnt++;
   });
 
   return Object.values(map).map(r => [r.pid, r.pname, r.yr, r.mo, r.total, r.cnt]);
