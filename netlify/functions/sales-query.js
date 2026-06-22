@@ -172,7 +172,7 @@ exports.handler = async function(event) {
     const revLines = allInvIds.length > 0
       ? await odooCall(uid, 'account.move.line', 'search_read',
           [[['move_id','in',allInvIds],
-            ['account_id','in',[45, 46, 307, 280, 278, 293, 205]]]],
+            ['account_id','in',[45, 46, 307, 280, 278, 293, 205, 286]]]],
           { fields: ['move_id','price_subtotal'], limit: 10000 })
       : [];
 
@@ -206,11 +206,15 @@ exports.handler = async function(event) {
         [[['id','in',allInvoiceIds]]],
         { fields: ['id','invoice_origin','move_type','amount_untaxed'], limit: 2000 });
 
-      // Clean origin — strip trailing " REFUND", spaces etc, include UK1SO- format
+      // Clean and split origins — handles "SO/123, SO/456" multi-origin strings
       const cleanOrigin = o => o ? o.replace(/\s*(REFUND|refund).*$/, '').trim() : null;
+      const splitOrigins = o => {
+        const clean = cleanOrigin(o);
+        if (!clean) return [];
+        return clean.split(',').map(s => s.trim()).filter(s => s.startsWith('SO/') || s.startsWith('UK1SO-'));
+      };
       const soNames = [...new Set(
-        invWithOrigin.map(i => cleanOrigin(i.invoice_origin))
-          .filter(o => o && (o.startsWith('SO/') || o.startsWith('UK1SO-')))
+        invWithOrigin.flatMap(i => splitOrigins(i.invoice_origin))
       )];
 
       const soMarginMap = {}, soRevenueMap = {};
@@ -227,12 +231,33 @@ exports.handler = async function(event) {
       const invoiceIdSet = new Set(invoiceIds);
       const refundIdSet  = new Set(refundIds);
 
+      // Build fallback GP from invoice line purchase_price for unmatched invoices
+      const unmatchedIds = invWithOrigin
+        .filter(inv => {
+          const origins = splitOrigins(inv.invoice_origin);
+          return origins.length === 0 || !origins.some(o => soMarginMap[o]);
+        })
+        .map(inv => inv.id);
+
+      const fallbackGpMap = {};
+      if (unmatchedIds.length > 0) {
+        const fallbackLines = await odooCall(uid, 'account.move.line', 'search_read',
+          [[['move_id','in',unmatchedIds],['purchase_price','>',0]]],
+          { fields: ['move_id','price_subtotal','purchase_price','quantity'], limit: 5000 });
+        fallbackLines.forEach(l => {
+          const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
+          const gp  = (l.price_subtotal||0) - (l.purchase_price||0) * (l.quantity||0);
+          fallbackGpMap[mid] = (fallbackGpMap[mid]||0) + gp;
+        });
+      }
+
       invWithOrigin.forEach(inv => {
-        const soName   = cleanOrigin(inv.invoice_origin) || '';
+        const origins  = splitOrigins(inv.invoice_origin);
+        const soName   = origins.find(o => soMarginMap[o]) || '';
         const soMargin = soMarginMap[soName]  || 0;
         const soRev    = soRevenueMap[soName] || 0;
         const invRev   = parseFloat(inv.amount_untaxed||0);
-        const gpShare  = soRev > 0 ? soMargin * (invRev / soRev) : 0;
+        const gpShare  = soRev > 0 ? soMargin * (invRev / soRev) : (fallbackGpMap[inv.id] || 0);
         const mid = inv.id;
         if (invoiceIdSet.has(mid))     gpInv += gpShare;
         else if (refundIdSet.has(mid)) gpInv -= gpShare;
