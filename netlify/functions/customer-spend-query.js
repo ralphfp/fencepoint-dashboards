@@ -102,7 +102,7 @@ async function fetchInvoicedPeriod(uid, fromStr, toStr) {
     for (let i = 0; i < allInvIds.length; i += 500) {
       const chunk = allInvIds.slice(i, i + 500);
       const revLines = await odooCall(uid, 'account.move.line', 'search_read',
-        [[['move_id','in',chunk],['account_id','in',[45, 46, 307, 280, 278, 293, 205, 286]]]],
+        [[['move_id','in',chunk],['account_id','in',revenueAccountIds]]],
         { fields: ['move_id','price_subtotal'], limit: 5000 });
       revLines.forEach(l => {
         const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
@@ -183,11 +183,31 @@ async function fetchOrdersPeriod(uid, fromStr, toStr) {
   return Object.values(map).map(r => [r.pid, r.pname, r.yr, r.mo, r.total, r.cnt]);
 }
 
+// Revenue account IDs — fetched dynamically from Odoo, cached per process
+let _revenueAccountIds = null;
+
+async function getRevenueAccountIds(uid) {
+  if (_revenueAccountIds) return _revenueAccountIds;
+  try {
+    // Fetch all income accounts (account_type = income or income_other)
+    const accounts = await odooCall(uid, 'account.account', 'search_read',
+      [[['account_type', 'in', ['income', 'income_other']]]],
+      { fields: ['id'], limit: 500 });
+    // Exclude rent accounts 99 (491000 Rental) and 224 (710000 Rates)
+    const ids = accounts.map(a => a.id).filter(id => id !== 99 && id !== 224);
+    _revenueAccountIds = ids.length > 0 ? ids : [45, 46, 307, 280, 278, 293, 205, 286];
+  } catch(e) {
+    _revenueAccountIds = [45, 46, 307, 280, 278, 293, 205, 286];
+  }
+  return _revenueAccountIds;
+}
+
 exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
   try {
     const { fromStr, toStr, priorFrom, priorTo, mode } = JSON.parse(event.body);
     const uid = await getUid();
+    const revenueAccountIds = await getRevenueAccountIds(uid);
     const fetchFn = mode === 'invoiced' ? fetchInvoicedPeriod : fetchOrdersPeriod;
 
     const [current, prior] = await Promise.all([
