@@ -76,11 +76,31 @@ async function odooCall(uid, model, method, args, kwargs) {
   return extractArrayData(xml);
 }
 
+// Revenue account IDs — fetched dynamically from Odoo, cached per process
+let _revenueAccountIds = null;
+
+async function getRevenueAccountIds(uid) {
+  if (_revenueAccountIds) return _revenueAccountIds;
+  try {
+    // Fetch all income accounts (account_type = income or income_other)
+    const accounts = await odooCall(uid, 'account.account', 'search_read',
+      [[['account_type', 'in', ['income', 'income_other']]]],
+      { fields: ['id'], limit: 500 });
+    // Exclude rent accounts 99 (491000 Rental) and 224 (710000 Rates)
+    const ids = accounts.map(a => a.id).filter(id => id !== 99 && id !== 224);
+    _revenueAccountIds = ids.length > 0 ? ids : [45, 46, 307, 280, 278, 293, 205, 286];
+  } catch(e) {
+    _revenueAccountIds = [45, 46, 307, 280, 278, 293, 205, 286];
+  }
+  return _revenueAccountIds;
+}
+
 exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
   try {
     const { type, dateFrom, dateTo } = JSON.parse(event.body);
     const uid = await getUid();
+    const revenueAccountIds = await getRevenueAccountIds(uid);
 
     // GP: find posted invoices in range, get their sale order origins, sum margins
     if (type === 'gp') {
@@ -97,7 +117,7 @@ exports.handler = async function(event) {
       const invIds = invoices.map(i => i.id);
       const revLines = invIds.length > 0
         ? await odooCall(uid, 'account.move.line', 'search_read',
-            [[['move_id','in',invIds],['account_id','in',[45, 46, 307, 280, 278, 293, 205, 286]]]],
+            [[['move_id','in',invIds],['account_id','in',revenueAccountIds]]],
             { fields: ['move_id','price_subtotal'], limit: 10000 })
         : [];
       const invRevMap = {};
