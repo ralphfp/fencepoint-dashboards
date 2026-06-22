@@ -97,7 +97,7 @@ exports.handler = async function(event) {
       const invIds = invoices.map(i => i.id);
       const revLines = invIds.length > 0
         ? await odooCall(uid, 'account.move.line', 'search_read',
-            [[['move_id','in',invIds],['account_id','in',[45, 46, 307, 280, 278, 293, 205]]]],
+            [[['move_id','in',invIds],['account_id','in',[45, 46, 307, 280, 278, 293, 205, 286]]]],
             { fields: ['move_id','price_subtotal'], limit: 10000 })
         : [];
       const invRevMap = {};
