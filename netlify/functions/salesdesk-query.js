@@ -70,11 +70,31 @@ async function odooCall(uid, model, method, args, kwargs) {
   return extractArrayData(xml);
 }
 
+// Revenue account IDs — fetched dynamically from Odoo, cached per process
+let _revenueAccountIds = null;
+
+async function getRevenueAccountIds(uid) {
+  if (_revenueAccountIds) return _revenueAccountIds;
+  try {
+    // Fetch all income accounts (account_type = income or income_other)
+    const accounts = await odooCall(uid, 'account.account', 'search_read',
+      [[['account_type', 'in', ['income', 'income_other']]]],
+      { fields: ['id'], limit: 500 });
+    // Exclude rent accounts 99 (491000 Rental) and 224 (710000 Rates)
+    const ids = accounts.map(a => a.id).filter(id => id !== 99 && id !== 224);
+    _revenueAccountIds = ids.length > 0 ? ids : [45, 46, 307, 280, 278, 293, 205, 286];
+  } catch(e) {
+    _revenueAccountIds = [45, 46, 307, 280, 278, 293, 205, 286];
+  }
+  return _revenueAccountIds;
+}
+
 exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
   try {
     const { monthStart, today, tomorrow } = JSON.parse(event.body);
     const uid = await getUid();
+    const revenueAccountIds = await getRevenueAccountIds(uid);
 
     // Q1: Confirmed sale orders MTD — matching daily activity report logic exactly
     // Uses sale_order.amount_untaxed (header total) + POS orders, same as daily report
@@ -175,7 +195,7 @@ exports.handler = async function(event) {
     const revLines = allInvIds.length > 0
       ? await odooCall(uid, 'account.move.line', 'search_read',
           [[['move_id','in',allInvIds],
-            ['account_id','in',[45, 46, 307, 280, 278, 293, 205, 286]]]],
+            ['account_id','in',revenueAccountIds]]],
           { fields: ['move_id','price_subtotal'], limit: 10000 })
       : [];
 
@@ -212,7 +232,7 @@ exports.handler = async function(event) {
       // Fetch invoices with their invoice_origin to link back to sale orders
       const invWithOrigin = await odooCall(uid, 'account.move', 'search_read',
         [[['id','in',allInvoiceIds]]],
-        { fields: ['id','invoice_origin','move_type','amount_untaxed'], limit: 2000 });
+        { fields: ['id','invoice_origin','move_type'], limit: 2000 });
 
       // Extract sale order names from invoice_origin
       // Clean and split origins — handles "SO/123, SO/456" multi-origin strings
@@ -270,7 +290,8 @@ exports.handler = async function(event) {
         const soName   = origins.find(o => soMarginMap[o]) || '';
         const soMargin = soMarginMap[soName]  || 0;
         const soRev    = soRevenueMap[soName] || 0;
-        const invRev   = parseFloat(inv.amount_untaxed||0);
+        // Use revenue line amount (not amount_untaxed) to exclude rent from GP basis
+        const invRev   = invRevMap[inv.id] || 0;
         // Use SO margin if available, otherwise fall back to invoice line purchase_price
         const gpShare  = soRev > 0 ? soMargin * (invRev / soRev) : (fallbackGpMap[inv.id] || 0);
         const mid = inv.id;
