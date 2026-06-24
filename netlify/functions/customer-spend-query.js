@@ -82,42 +82,57 @@ async function odooSearchAll(uid, model, domain, fields, pageSize=2000) {
 }
 
 async function fetchInvoicedPeriod(uid, fromStr, toStr) {
-  // Paginate through ALL posted invoices/refunds — no limit
-  const invoices = await odooSearchAll(uid, 'account.move',
-    [
-      ['move_type', 'in', ['out_invoice', 'out_refund']],
-      ['state', '=', 'posted'],
-      ['invoice_date', '>=', fromStr],
-      ['invoice_date', '<=', toStr],
-      ['partner_id', '!=', false],
-    ],
-    ['id', 'partner_id', 'commercial_partner_id', 'invoice_date', 'move_type']
-  );
+  // Step 1: fetch all posted invoices/refunds in the period (headers only)
+  // Use parallel fetches for invoices and refunds to save time
+  const [invoices, refunds] = await Promise.all([
+    odooSearchAll(uid, 'account.move',
+      [['move_type','=','out_invoice'],['state','=','posted'],
+       ['invoice_date','>=',fromStr],['invoice_date','<=',toStr],
+       ['partner_id','!=',false]],
+      ['id','partner_id','commercial_partner_id','invoice_date'], 2000),
+    odooSearchAll(uid, 'account.move',
+      [['move_type','=','out_refund'],['state','=','posted'],
+       ['invoice_date','>=',fromStr],['invoice_date','<=',toStr],
+       ['partner_id','!=',false]],
+      ['id','partner_id','commercial_partner_id','invoice_date'], 2000),
+  ]);
 
-  // Sum only 4xxxx revenue account lines excl rent — matches Odoo Invoice Analysis
-  const allInvIds = invoices.map(i => i.id);
+  const allInvoices = [...invoices.map(i=>({...i,move_type:'out_invoice'})),
+                       ...refunds.map(i=>({...i,move_type:'out_refund'}))];
+  const allIds = allInvoices.map(i => i.id);
+
+  if (allIds.length === 0) return [];
+
+  // Step 2: fetch revenue lines for all invoice IDs in parallel batches of 1000
   const invRevMap = {};
-  if (allInvIds.length > 0) {
-    // Batch in chunks of 500 to avoid domain limits
-    for (let i = 0; i < allInvIds.length; i += 500) {
-      const chunk = allInvIds.slice(i, i + 500);
-      const revLines = await odooCall(uid, 'account.move.line', 'search_read',
+  const batchSize = 1000;
+  const batches = [];
+  for (let i = 0; i < allIds.length; i += batchSize) {
+    batches.push(allIds.slice(i, i + batchSize));
+  }
+  // Run batches in parallel (max 3 at a time to avoid overwhelming Odoo)
+  for (let i = 0; i < batches.length; i += 3) {
+    const group = batches.slice(i, i + 3);
+    const results = await Promise.all(group.map(chunk =>
+      odooCall(uid, 'account.move.line', 'search_read',
         [[['move_id','in',chunk],['account_id','in',revenueAccountIds]]],
-        { fields: ['move_id','price_subtotal'], limit: 5000 });
-      revLines.forEach(l => {
-        const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
-        invRevMap[mid] = (invRevMap[mid]||0) + (l.price_subtotal||0);
-      });
-    }
+        { fields: ['move_id','price_subtotal'], limit: 5000 })
+    ));
+    results.flat().forEach(l => {
+      const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
+      invRevMap[mid] = (invRevMap[mid]||0) + (l.price_subtotal||0);
+    });
   }
 
+  // Step 3: aggregate by partner + year + month
   const map = {};
-  invoices.forEach(inv => {
-    // Use commercial_partner_id so contacts roll up to parent company
-    const pid   = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[0] : (Array.isArray(inv.partner_id) ? inv.partner_id[0] : inv.partner_id);
-    const pname = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[1] : (Array.isArray(inv.partner_id) ? inv.partner_id[1] : '');
-    const dt    = (inv.invoice_date || '').slice(0, 7);
-    if (!dt) return;
+  allInvoices.forEach(inv => {
+    const pid   = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[0]
+                : (Array.isArray(inv.partner_id) ? inv.partner_id[0] : inv.partner_id);
+    const pname = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[1]
+                : (Array.isArray(inv.partner_id) ? inv.partner_id[1] : '');
+    const dt = (inv.invoice_date || '').slice(0, 7);
+    if (!dt || !pid) return;
     const yr = parseInt(dt.slice(0,4)), mo = parseInt(dt.slice(5,7));
     const isRefund = inv.move_type === 'out_refund';
     const lineRev  = invRevMap[inv.id] || 0;
