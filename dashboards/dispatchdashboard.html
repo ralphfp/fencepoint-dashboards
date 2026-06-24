@@ -393,6 +393,7 @@
             <div class="order-meta">
               <span class="status-badge ${badgeCls}">${badgeLbl}</span>
               <span style="margin-top:3px;">${o.salesperson}</span>
+              ${o.transport ? `<span style="margin-top:3px;font-size:11px;font-weight:600;color:var(--orange);">🚚 ${o.transport}</span>` : ''}
             </div>
             <div class="order-value">${fmt(o.revenue)}</div>
             <span class="chevron" id="chev-${o.id}">▶</span>
