@@ -333,9 +333,13 @@
     const today = todayStr();
     const week = endOfWeek();
 
-    // Group by date
+    // Separate part-shipped from pending
+    const partShipped = orders.filter(o => o.delivery_status === 'started');
+    const pending     = orders.filter(o => o.delivery_status !== 'started');
+
+    // Group pending by date
     const groups = {};
-    orders.forEach(o => {
+    pending.forEach(o => {
       const dk = dateKey(o.commitment_date);
       if (!groups[dk]) groups[dk] = [];
       groups[dk].push(o);
@@ -343,6 +347,12 @@
 
     const sortedDates = Object.keys(groups).sort();
     let html = '';
+
+    // Part Shipped section at top
+    if (partShipped.length > 0) {
+      html += '<div class="day-heading" style="background:#FFF3CD;border-left:4px solid #F37032;padding-left:12px"><span>⚡ Part Shipped — In Progress ('+partShipped.length+')</span></div>';
+      partShipped.forEach(o => { html += renderOrder(o, today); });
+    }
 
     sortedDates.forEach(dk => {
       const d = new Date(dk + 'T12:00:00');
@@ -353,7 +363,7 @@
       groups[dk].forEach(o => {
         const statusCls = o.delivery_status === 'started' ? 'status-started' : 'status-pending';
         const badgeCls  = o.delivery_status === 'started' ? 'badge-started' : 'badge-pending';
-        const badgeLbl  = o.delivery_status === 'started' ? 'In Progress' : 'Not Started';
+        const badgeLbl  = o.delivery_status === 'started' ? 'Part Shipped' : 'Not Started';
         const lineCount = o.lines.length;
         const linesSummary = o.lines.slice(0,2).map(l => {
           const desc = l.product || l.description.split('\n')[0];
