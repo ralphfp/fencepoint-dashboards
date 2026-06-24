@@ -127,19 +127,38 @@ exports.handler = async function(event) {
 
     const orderIds = orders.map(o => o.id);
 
-    // Get order lines (exclude delivery, section/note lines, zero-qty)
-    const lines = await odooCall(uid, 'sale.order.line', 'search_read',
-      [[
-        ['order_id', 'in', orderIds],
-        ['display_type', '=', false],
-        ['is_delivery', '=', false],
-        ['product_uom_qty', '>', 0],
-      ]],
-      {
-        fields: ['order_id','product_id','name','product_uom_qty','product_uom','price_subtotal'],
-        limit: 5000
-      }
-    );
+    // Get order lines and delivery records in parallel
+    const [lines, pickings] = await Promise.all([
+      odooCall(uid, 'sale.order.line', 'search_read',
+        [[
+          ['order_id', 'in', orderIds],
+          ['display_type', '=', false],
+          ['is_delivery', '=', false],
+          ['product_uom_qty', '>', 0],
+        ]],
+        {
+          fields: ['order_id','product_id','name','product_uom_qty','product_uom','price_subtotal'],
+          limit: 5000
+        }
+      ),
+      // Fetch stock.picking (deliveries) to get transport company
+      odooCall(uid, 'stock.picking', 'search_read',
+        [[
+          ['sale_id', 'in', orderIds],
+          ['state', 'not in', ['cancel', 'done']],
+          ['picking_type_code', '=', 'outgoing'],
+        ]],
+        { fields: ['sale_id', 'carrier_id'], limit: 1000 }
+      ),
+    ]);
+
+    // Build transport company map by sale order id
+    const transportMap = {};
+    pickings.forEach(p => {
+      const sid = Array.isArray(p.sale_id) ? p.sale_id[0] : p.sale_id;
+      const carrier = Array.isArray(p.carrier_id) ? p.carrier_id[1] : '';
+      if (sid && carrier && !transportMap[sid]) transportMap[sid] = carrier;
+    });
 
     // Group lines by order id
     const linesByOrder = {};
@@ -166,6 +185,7 @@ exports.handler = async function(event) {
       salesperson: Array.isArray(o.user_id) ? o.user_id[1] : '',
       revenue: o.amount_untaxed || 0,
       margin: o.margin || 0,
+      transport: transportMap[o.id] || '',
       lines: linesByOrder[o.id] || [],
     }));
 
