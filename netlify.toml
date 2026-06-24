@@ -1,0 +1,11 @@
+[build]
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[functions."customer-spend-query"]
+  timeout = 30
+
+[functions."customer-spend-drill"]
+  timeout = 30
