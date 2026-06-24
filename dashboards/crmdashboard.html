@@ -54,8 +54,8 @@
   .month-radio:checked + .month-btn { background:var(--orange); border-color:var(--orange); color:#fff; }
   .month-btn:hover { border-color:var(--orange); color:var(--orange); }
 
-  .kpi-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
-  @media(max-width:900px){ .kpi-grid{ grid-template-columns:repeat(3,1fr); } }
+  .kpi-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:12px; margin-bottom:18px; }
+  @media(max-width:900px){ .kpi-grid{ grid-template-columns:repeat(4,1fr); } }
   @media(max-width:560px){ .kpi-grid{ grid-template-columns:repeat(2,1fr); } }
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; position:relative; overflow:hidden; }
   .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; border-radius:12px 12px 0 0; }
@@ -152,6 +152,7 @@
     <div class="kpi c4"><div class="kpi-lbl">In Progress</div><div class="kpi-val" id="kv-open">—</div><div class="kpi-sub">Active pipeline deals</div></div>
     <div class="kpi c5"><div class="kpi-lbl">Won Revenue</div><div class="kpi-val" id="kv-value">—</div><div class="kpi-sub">Expected ex-VAT</div></div>
     <div class="kpi c6"><div class="kpi-lbl">Conversion Rate</div><div class="kpi-val" id="kv-conv">—</div><div class="kpi-sub">Won ÷ Total Deals</div></div>
+    <div class="kpi c6"><div class="kpi-lbl">Value Win Rate</div><div class="kpi-val" id="kv-vconv">—</div><div class="kpi-sub">£ Won ÷ £ Quoted (<span id="kv-quoted">—</span>)</div></div>
   </div>
 
   <div class="charts-grid">
@@ -223,7 +224,7 @@ const PIPELINE_STAGES = ['Quote Raised','Proposal Sent','In Running','Final Nego
 function buildState(activeDeals2026, pipelineDeals, lostDeals, wonDeals2026, gpMap) {
   function gp(id) { return gpMap[String(id)] || {gp:null, soRev:null}; }
   const mo = {};
-  MONTHS.forEach(m => mo[m] = {created:0,won:0,lost:0,open:0,wonValue:0,lostValue:0,openValue:0,lostReasons:{},deals:[]});
+  MONTHS.forEach(m => mo[m] = {created:0,won:0,lost:0,open:0,wonValue:0,lostValue:0,openValue:0,quotedValue:0,lostReasons:{},deals:[]});
   const allLR={};
 
   const allCreated = [...activeDeals2026,...lostDeals]
@@ -237,7 +238,7 @@ function buildState(activeDeals2026, pipelineDeals, lostDeals, wonDeals2026, gpM
     if (!MONTHS.includes(m)) return;
     wonIds.add(String(d.id));
     const rev=parseFloat(d.expected_revenue||0), o=mo[m], g=gp(d.id);
-    o.won++; o.wonValue+=rev;
+    o.won++; o.wonValue+=rev; o.quotedValue+=rev;
     o.deals.push({id:d.id,name:d.name||'',customer:d.partner_id_label||'',salesperson:d.user_id_label||'',
                    stage:d.stage_id_label||'',status:'won',revenue:rev,
                    lostReason:'',deadline:d.date_deadline||'',source:d.source_id_label||'',
@@ -248,7 +249,7 @@ function buildState(activeDeals2026, pipelineDeals, lostDeals, wonDeals2026, gpM
     const m=(d.create_date||'').slice(0,7);
     if (!MONTHS.includes(m)) return;
     const rev=parseFloat(d.expected_revenue||0), o=mo[m];
-    o.lost++; o.lostValue+=rev;
+    o.lost++; o.lostValue+=rev; o.quotedValue+=rev;
     const r=d.lost_reason_id_label||'Unknown';
     o.lostReasons[r]=(o.lostReasons[r]||0)+1; allLR[r]=(allLR[r]||0)+1;
     const gl=gp(d.id);
@@ -262,7 +263,7 @@ function buildState(activeDeals2026, pipelineDeals, lostDeals, wonDeals2026, gpM
     const m=(d.create_date||'').slice(0,7);
     if (!MONTHS.includes(m)) return;
     const rev=parseFloat(d.expected_revenue||0), o=mo[m];
-    o.open++; o.openValue+=rev;
+    o.open++; o.openValue+=rev; o.quotedValue+=rev;
     const go=gp(d.id);
     o.deals.push({id:d.id,name:d.name||'',customer:d.partner_id_label||'',salesperson:d.user_id_label||'',
                    stage:d.stage_id_label||'',status:d.won_status||'pending',revenue:rev,
@@ -288,17 +289,24 @@ function buildState(activeDeals2026, pipelineDeals, lostDeals, wonDeals2026, gpM
   const tl = MONTHS.reduce((s,m)=>s+mo[m].lost, 0);
   const totalOpen = pipelineDeals.length;
 
-  return {mo,pipeline,pipelineByMonth,allLR,kpi:{created:allCreated.length,won:tw,lost:tl,open:totalOpen,wonValue:tv,
-           conv:allCreated.length>0?((tw/allCreated.length)*100).toFixed(1):'0'}};
+    const tq = MONTHS.reduce((s,m)=>s+mo[m].quotedValue, 0);
+  return {mo,pipeline,pipelineByMonth,allLR,kpi:{created:allCreated.length,won:tw,lost:tl,open:totalOpen,wonValue:tv,quotedValue:tq,
+           conv:allCreated.length>0?((tw/allCreated.length)*100).toFixed(1):'0',
+           valueConv:tq>0?((tv/tq)*100).toFixed(1):'0'}};
 }
 
 function renderKPIs(m) {
   let c,w,l,op,v,conv,sub;
-  if (m==='all') { ({created:c,won:w,lost:l,open:op,wonValue:v,conv}=S.kpi); sub='All opportunities in 2026'; }
-  else { const d=S.mo[m]; c=d.created;w=d.won;l=d.lost;op=d.open;v=d.wonValue;
-          conv=c>0?((w/c)*100).toFixed(1):'0'; sub=`Created in ${MLBLS[MONTHS.indexOf(m)]}`; }
+  let vconv, qv;
+  if (m==='all') { ({created:c,won:w,lost:l,open:op,wonValue:v,conv,quotedValue:qv,valueConv:vconv}=S.kpi); sub='All opportunities in 2026'; }
+  else { const d=S.mo[m]; c=d.created;w=d.won;l=d.lost;op=d.open;v=d.wonValue;qv=d.quotedValue;
+          conv=c>0?((w/c)*100).toFixed(1):'0';
+          vconv=qv>0?((v/qv)*100).toFixed(1):'0';
+          sub=`Created in ${MLBLS[MONTHS.indexOf(m)]}`; }
   set('kv-created',c); set('kv-won',w); set('kv-lost',l); set('kv-open',op);
   set('kv-conv',conv+'%'); set('kv-value',gbp(v));
+  set('kv-vconv',(vconv||'0')+'%');
+  set('kv-quoted',gbp(qv||0));
   set('ks-created',sub); set('ks-won',gbp(v)+' total value');
 }
 
