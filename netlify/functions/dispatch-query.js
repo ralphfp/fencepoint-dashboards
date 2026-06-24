@@ -76,21 +76,46 @@ exports.handler = async function(event) {
     const { today } = JSON.parse(event.body);
     const uid = await getUid();
 
-    // Confirmed sale orders with commitment_date from today onwards, not fully delivered
-    const orders = await odooCall(uid, 'sale.order', 'search_read',
-      [[
-        ['state', '=', 'sale'],
-        ['commitment_date', '>=', today + ' 00:00:00'],
-        ['delivery_status', 'in', ['pending', 'started']],
-        ['tag_ids', 'in', [20]],
-      ]],
-      {
-        fields: ['id','name','partner_id','commitment_date','delivery_status',
-                 'user_id','amount_untaxed','margin','client_order_ref','tag_ids'],
-        order: 'commitment_date asc',
-        limit: 500
-      }
-    );
+    // Fetch in two passes:
+    // 1. Pending orders with commitment_date from today onwards
+    // 2. ALL part-shipped (started) orders regardless of commitment_date
+    const [pendingOrders, startedOrders] = await Promise.all([
+      odooCall(uid, 'sale.order', 'search_read',
+        [[
+          ['state', '=', 'sale'],
+          ['commitment_date', '>=', today + ' 00:00:00'],
+          ['delivery_status', '=', 'pending'],
+          ['tag_ids', 'in', [20]],
+        ]],
+        {
+          fields: ['id','name','partner_id','commitment_date','delivery_status',
+                   'user_id','amount_untaxed','margin','client_order_ref','tag_ids'],
+          order: 'commitment_date asc',
+          limit: 500
+        }
+      ),
+      odooCall(uid, 'sale.order', 'search_read',
+        [[
+          ['state', '=', 'sale'],
+          ['delivery_status', '=', 'started'],
+          ['tag_ids', 'in', [20]],
+        ]],
+        {
+          fields: ['id','name','partner_id','commitment_date','delivery_status',
+                   'user_id','amount_untaxed','margin','client_order_ref','tag_ids'],
+          order: 'commitment_date asc',
+          limit: 500
+        }
+      ),
+    ]);
+
+    // Merge — started orders first (already in progress), then pending by date
+    // Deduplicate in case a started order also has commitment_date >= today
+    const seenIds = new Set();
+    const orders = [];
+    [...startedOrders, ...pendingOrders].forEach(o => {
+      if (!seenIds.has(o.id)) { seenIds.add(o.id); orders.push(o); }
+    });
 
     if (!orders.length) {
       return {
