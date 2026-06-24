@@ -82,49 +82,34 @@ async function odooSearchAll(uid, model, domain, fields, pageSize=2000) {
 }
 
 async function fetchInvoicedPeriod(uid, fromStr, toStr) {
-  // Step 1: fetch all posted invoices/refunds in the period (headers only)
-  // Use parallel fetches for invoices and refunds to save time
-  const [invoices, refunds] = await Promise.all([
-    odooSearchAll(uid, 'account.move',
-      [['move_type','=','out_invoice'],['state','=','posted'],
-       ['invoice_date','>=',fromStr],['invoice_date','<=',toStr],
-       ['partner_id','!=',false]],
-      ['id','partner_id','commercial_partner_id','invoice_date'], 2000),
-    odooSearchAll(uid, 'account.move',
-      [['move_type','=','out_refund'],['state','=','posted'],
-       ['invoice_date','>=',fromStr],['invoice_date','<=',toStr],
-       ['partner_id','!=',false]],
-      ['id','partner_id','commercial_partner_id','invoice_date'], 2000),
-  ]);
+  // Fetch all invoices and refunds sequentially to avoid overwhelming Odoo
+  const allInvoices = await odooSearchAll(uid, 'account.move',
+    [['move_type','in',['out_invoice','out_refund']],['state','=','posted'],
+     ['invoice_date','>=',fromStr],['invoice_date','<=',toStr],
+     ['partner_id','!=',false]],
+    ['id','partner_id','commercial_partner_id','invoice_date','move_type','amount_untaxed'],
+    2000
+  );
 
-  const allInvoices = [...invoices.map(i=>({...i,move_type:'out_invoice'})),
-                       ...refunds.map(i=>({...i,move_type:'out_refund'}))];
+  if (allInvoices.length === 0) return [];
+
+  // Build rent deduction map — fetch lines on rent accounts for these invoices
+  // Use sequential batches of 500 to avoid XML-RPC limits
   const allIds = allInvoices.map(i => i.id);
-
-  if (allIds.length === 0) return [];
-
-  // Step 2: fetch revenue lines for all invoice IDs in parallel batches of 1000
-  const invRevMap = {};
-  const batchSize = 1000;
-  const batches = [];
-  for (let i = 0; i < allIds.length; i += batchSize) {
-    batches.push(allIds.slice(i, i + batchSize));
-  }
-  // Run batches in parallel (max 3 at a time to avoid overwhelming Odoo)
-  for (let i = 0; i < batches.length; i += 3) {
-    const group = batches.slice(i, i + 3);
-    const results = await Promise.all(group.map(chunk =>
-      odooCall(uid, 'account.move.line', 'search_read',
-        [[['move_id','in',chunk],['account_id','in',revenueAccountIds]]],
-        { fields: ['move_id','price_subtotal'], limit: 5000 })
-    ));
-    results.flat().forEach(l => {
+  const rentMap = {};
+  for (let i = 0; i < allIds.length; i += 500) {
+    const chunk = allIds.slice(i, i + 500);
+    const rentLines = await odooCall(uid, 'account.move.line', 'search_read',
+      [[['move_id','in',chunk],['account_id','in',[99,224]]]],
+      { fields: ['move_id','price_subtotal'], limit: 2000 });
+    rentLines.forEach(l => {
       const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
-      invRevMap[mid] = (invRevMap[mid]||0) + (l.price_subtotal||0);
+      rentMap[mid] = (rentMap[mid]||0) + (l.price_subtotal||0);
     });
   }
 
-  // Step 3: aggregate by partner + year + month
+  // Aggregate by commercial_partner + year + month
+  // Revenue = amount_untaxed - rent lines (simpler and faster than fetching all revenue lines)
   const map = {};
   allInvoices.forEach(inv => {
     const pid   = Array.isArray(inv.commercial_partner_id) ? inv.commercial_partner_id[0]
@@ -135,12 +120,15 @@ async function fetchInvoicedPeriod(uid, fromStr, toStr) {
     if (!dt || !pid) return;
     const yr = parseInt(dt.slice(0,4)), mo = parseInt(dt.slice(5,7));
     const isRefund = inv.move_type === 'out_refund';
-    const lineRev  = invRevMap[inv.id] || 0;
-    const amt      = isRefund ? -lineRev : lineRev;
+    const gross = parseFloat(inv.amount_untaxed||0);
+    const rent  = rentMap[inv.id] || 0;
+    const net   = gross - rent;
+    const amt   = isRefund ? -net : net;
+    if (Math.abs(amt) < 0.01) return; // skip zero-value lines
     const key = `${pid}|${yr}|${mo}`;
     if (!map[key]) map[key] = { pid, pname, yr, mo, total: 0, cnt: 0 };
     map[key].total += amt;
-    if (!isRefund && lineRev > 0) map[key].cnt++;
+    if (!isRefund && net > 0) map[key].cnt++;
   });
 
   return Object.values(map).map(r => [r.pid, r.pname, r.yr, r.mo, r.total, r.cnt]);
@@ -225,10 +213,9 @@ exports.handler = async function(event) {
     const revenueAccountIds = await getRevenueAccountIds(uid);
     const fetchFn = mode === 'invoiced' ? fetchInvoicedPeriod : fetchOrdersPeriod;
 
-    const [current, prior] = await Promise.all([
-      fetchFn(uid, fromStr, toStr),
-      fetchFn(uid, priorFrom, priorTo),
-    ]);
+    // Sequential fetches — parallel overwhelms Odoo XML-RPC on large date ranges
+    const current = await fetchFn(uid, fromStr, toStr);
+    const prior   = await fetchFn(uid, priorFrom, priorTo);
 
     // Fetch salesperson for all unique commercial partner IDs
     const allPids = [...new Set([
