@@ -148,16 +148,18 @@ exports.handler = async function(event) {
           ['state', 'not in', ['cancel', 'done']],
           ['picking_type_code', '=', 'outgoing'],
         ]],
-        { fields: ['sale_id', 'carrier_id'], limit: 1000 }
+        { fields: ['sale_id', 'carrier_id', 'x_studio_transport_company'], limit: 1000 }
       ),
     ]);
 
     // Build transport company map by sale order id
+    // Use x_studio_transport_company (custom field) first, fallback to carrier_id name
     const transportMap = {};
     pickings.forEach(p => {
       const sid = Array.isArray(p.sale_id) ? p.sale_id[0] : p.sale_id;
-      const carrier = Array.isArray(p.carrier_id) ? p.carrier_id[1] : '';
-      if (sid && carrier && !transportMap[sid]) transportMap[sid] = carrier;
+      const transport = p.x_studio_transport_company ||
+                        (Array.isArray(p.carrier_id) ? p.carrier_id[1] : '') || '';
+      if (sid && transport && !transportMap[sid]) transportMap[sid] = transport;
     });
 
     // Group lines by order id
