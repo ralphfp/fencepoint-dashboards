@@ -221,67 +221,26 @@ exports.handler = async function(event) {
     const allInvoiceIds = [...invoiceIds, ...refundIds];
 
     if (allInvoiceIds.length > 0) {
-      // Use sale_order.margin via invoice_origin — matches Odoo's own GP report
-      const invWithOrigin = await odooCall(uid, 'account.move', 'search_read',
-        [[['id','in',allInvoiceIds]]],
-        { fields: ['id','invoice_origin','move_type'], limit: 2000 });
+      // Use invoice line purchase_price directly — most accurate, handles partial invoices
+      // and down-payment offset lines correctly (they cancel out)
+      const gpLines = await odooCall(uid, 'account.move.line', 'search_read',
+        [[['move_id','in',allInvoiceIds],['purchase_price','>',0],['product_id','!=',false]]],
+        { fields: ['move_id','price_subtotal','purchase_price','quantity'], limit: 10000 });
 
-      // Clean and split origins — handles "SO/123, SO/456" multi-origin strings
-      const cleanOrigin = o => o ? o.replace(/\s*(REFUND|refund).*$/, '').trim() : null;
-      const splitOrigins = o => {
-        const clean = cleanOrigin(o);
-        if (!clean) return [];
-        return clean.split(',').map(s => s.trim()).filter(s => s.startsWith('SO/') || s.startsWith('UK1SO-'));
-      };
-      const soNames = [...new Set(
-        invWithOrigin.flatMap(i => splitOrigins(i.invoice_origin))
-      )];
-
-      const soMarginMap = {}, soRevenueMap = {};
-      if (soNames.length > 0) {
-        const soOrders = await odooCall(uid, 'sale.order', 'search_read',
-          [[['name','in',soNames]]],
-          { fields: ['name','margin','amount_untaxed'], limit: 2000 });
-        soOrders.forEach(so => {
-          soMarginMap[so.name]  = parseFloat(so.margin||0);
-          soRevenueMap[so.name] = parseFloat(so.amount_untaxed||0);
-        });
-      }
+      const invoiceGpMap = {};
+      gpLines.forEach(l => {
+        const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
+        const gp  = (l.price_subtotal||0) - (l.purchase_price||0) * (l.quantity||0);
+        invoiceGpMap[mid] = (invoiceGpMap[mid]||0) + gp;
+      });
 
       const invoiceIdSet = new Set(invoiceIds);
       const refundIdSet  = new Set(refundIds);
 
-      // Build fallback GP from invoice line purchase_price for unmatched invoices
-      const unmatchedIds = invWithOrigin
-        .filter(inv => {
-          const origins = splitOrigins(inv.invoice_origin);
-          return origins.length === 0 || !origins.some(o => soMarginMap[o]);
-        })
-        .map(inv => inv.id);
-
-      const fallbackGpMap = {};
-      if (unmatchedIds.length > 0) {
-        const fallbackLines = await odooCall(uid, 'account.move.line', 'search_read',
-          [[['move_id','in',unmatchedIds],['purchase_price','>',0]]],
-          { fields: ['move_id','price_subtotal','purchase_price','quantity'], limit: 5000 });
-        fallbackLines.forEach(l => {
-          const mid = Array.isArray(l.move_id) ? l.move_id[0] : l.move_id;
-          const gp  = (l.price_subtotal||0) - (l.purchase_price||0) * (l.quantity||0);
-          fallbackGpMap[mid] = (fallbackGpMap[mid]||0) + gp;
-        });
-      }
-
-      invWithOrigin.forEach(inv => {
-        const origins  = splitOrigins(inv.invoice_origin);
-        const soName   = origins.find(o => soMarginMap[o]) || '';
-        const soMargin = soMarginMap[soName]  || 0;
-        const soRev    = soRevenueMap[soName] || 0;
-        // Use revenue line amount (not amount_untaxed) to exclude rent from GP basis
-        const invRev   = invRevMap[inv.id] || 0;
-        const gpShare  = soRev > 0 ? soMargin * (invRev / soRev) : (fallbackGpMap[inv.id] || 0);
-        const mid = inv.id;
-        if (invoiceIdSet.has(mid))     gpInv += gpShare;
-        else if (refundIdSet.has(mid)) gpInv -= gpShare;
+      allInvoiceIds.forEach(mid => {
+        const gp = invoiceGpMap[mid] || 0;
+        if (invoiceIdSet.has(mid))     gpInv += gp;
+        else if (refundIdSet.has(mid)) gpInv -= gp;
       });
     }
 
