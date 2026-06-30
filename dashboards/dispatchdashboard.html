@@ -323,6 +323,50 @@
     renderOrders(filtered);
   }
 
+  function buildOrderCard(o, today) {
+    const statusCls = o.delivery_status === 'started' ? 'status-started' : 'status-pending';
+    const badgeCls  = o.delivery_status === 'started' ? 'badge-started'  : 'badge-pending';
+    const badgeLbl  = o.delivery_status === 'started' ? 'Part Shipped'   : 'Not Started';
+    const lineCount = o.lines.length;
+    const linesSummary = o.lines.slice(0,2).map(l => {
+      const desc = l.product || l.description.split('\n')[0];
+      return Math.round(l.qty) + ' ' + l.uom + ' ' + desc;
+    }).join(' · ') + (lineCount > 2 ? ' · +' + (lineCount-2) + ' more' : '');
+
+    const linesHtml = o.lines.map(l => {
+      const desc = l.product || l.description.split('\n')[0];
+      return '<tr><td>' + desc + '</td><td style="text-align:center">' + Math.round(l.qty) + ' ' + l.uom + '</td><td style="text-align:right">£' + Math.round(l.value).toLocaleString('en-GB') + '</td></tr>';
+    }).join('');
+
+    const gpPct = o.revenue > 0 ? Math.round(o.margin / o.revenue * 100) : 0;
+    const odooUrl = 'https://gravitai-fencepoint1-main-24360856.dev.odoo.com/odoo/sales/' + o.id;
+
+    return '<div class="order-card ' + statusCls + '" id="card-' + o.id + '">' +
+      '<div class="order-header" onclick="toggleCard(' + o.id + ')">' +
+        '<a href="' + odooUrl + '" onclick="event.stopPropagation()" class="order-so" target="_blank">' + o.name + '</a>' +
+        '<div>' +
+          '<div class="order-customer">' + o.customer + (o.ref ? '<span class="ref">Ref: ' + o.ref + '</span>' : '') + '</div>' +
+          '<div style="font-size:11px;color:var(--slate-lt);margin-top:2px;">' + linesSummary + '</div>' +
+        '</div>' +
+        '<div class="order-meta">' +
+          '<span class="status-badge ' + badgeCls + '">' + badgeLbl + '</span>' +
+          '<span style="margin-top:3px;">' + o.salesperson + '</span>' +
+          (o.transport ? '<span style="margin-top:3px;font-size:11px;font-weight:600;color:var(--orange);">🚚 ' + o.transport + '</span>' : '') +
+        '</div>' +
+        '<div class="order-value">£' + Math.round(o.revenue).toLocaleString('en-GB') + '<div style="font-size:10px;color:var(--slate-lt);font-weight:400;">' + gpPct + '% GP</div></div>' +
+        '<div style="color:var(--slate-lt);font-size:18px;transition:transform .2s" id="chev-' + o.id + '">▾</div>' +
+      '</div>' +
+      '<div class="order-lines" id="lines-' + o.id + '">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:13px;padding:0 18px 14px;display:table">' +
+          '<thead><tr><th style="text-align:left;padding:10px 18px 6px;color:var(--slate-lt);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Product / Description</th>' +
+          '<th style="text-align:center;padding:10px 18px 6px;color:var(--slate-lt);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Quantity</th>' +
+          '<th style="text-align:right;padding:10px 18px 6px;color:var(--slate-lt);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Value</th></tr></thead>' +
+          '<tbody>' + linesHtml + '</tbody>' +
+        '</table>' +
+      '</div>' +
+    '</div>';
+  }
+
   function renderOrders(orders) {
     const content = document.getElementById('content');
     if (!orders.length) {
@@ -350,8 +394,8 @@
 
     // Part Shipped section at top
     if (partShipped.length > 0) {
-      html += '<div class="day-heading" style="background:#FFF3CD;border-left:4px solid #F37032;padding-left:12px"><span>⚡ Part Shipped — In Progress ('+partShipped.length+')</span></div>';
-      partShipped.forEach(o => { html += renderOrder(o, today); });
+      html += '<div class="day-heading" style="background:#FFF3CD;border-left:4px solid #F37032;padding-left:12px"><span>⚡ Part Shipped — In Progress (' + partShipped.length + ')</span></div>';
+      partShipped.forEach(o => { html += buildOrderCard(o, today); });
     }
 
     sortedDates.forEach(dk => {
@@ -360,52 +404,7 @@
       const isToday = dk === today;
       html += `<div class="day-heading ${isToday ? 'today-heading' : ''}">${isToday ? '' : ''}<span>${label}</span><span style="font-size:10px;color:var(--slate-lt);margin-left:8px;">${groups[dk].length} order${groups[dk].length!==1?'s':''}</span></div>`;
 
-      groups[dk].forEach(o => {
-        const statusCls = o.delivery_status === 'started' ? 'status-started' : 'status-pending';
-        const badgeCls  = o.delivery_status === 'started' ? 'badge-started' : 'badge-pending';
-        const badgeLbl  = o.delivery_status === 'started' ? 'Part Shipped' : 'Not Started';
-        const lineCount = o.lines.length;
-        const linesSummary = o.lines.slice(0,2).map(l => {
-          const desc = l.product || l.description.split('\n')[0];
-          return `${Math.round(l.qty)} ${l.uom} ${desc}`;
-        }).join(' · ') + (lineCount > 2 ? ` · +${lineCount-2} more` : '');
-
-        const linesHtml = o.lines.map(l => {
-          const desc = l.product || '';
-          const note = l.description && l.description !== desc ? l.description.split('\n')[0] : '';
-          return `<tr>
-            <td><div class="product-name">${desc || l.description.split('\n')[0]}</div>${note && note !== desc ? `<div class="product-desc">${note}</div>` : ''}</td>
-            <td><span class="qty-badge">${l.qty % 1 === 0 ? Math.round(l.qty) : l.qty} ${l.uom}</span></td>
-            <td>${fmt(l.subtotal)}</td>
-          </tr>`;
-        }).join('');
-
-        const odooUrl = `https://fencepoint.odoo.com/odoo/sales/${o.id}`;
-
-        html += `
-        <div class="order-card ${statusCls}" id="card-${o.id}">
-          <div class="order-header" onclick="toggleCard(${o.id})">
-            <span class="order-num"><a href="${odooUrl}" target="_blank" onclick="event.stopPropagation()" style="color:var(--orange);text-decoration:none;">${o.name}</a></span>
-            <div>
-              <div class="order-customer">${o.customer}${o.ref ? `<span class="ref">Ref: ${o.ref}</span>` : ''}</div>
-              <div style="font-size:11px;color:var(--slate-lt);margin-top:2px;">${linesSummary}</div>
-            </div>
-            <div class="order-meta">
-              <span class="status-badge ${badgeCls}">${badgeLbl}</span>
-              <span style="margin-top:3px;">${o.salesperson}</span>
-              ${o.transport ? `<span style="margin-top:3px;font-size:11px;font-weight:600;color:var(--orange);">🚚 ${o.transport}</span>` : ''}
-            </div>
-            <div class="order-value">${fmt(o.revenue)}</div>
-            <span class="chevron" id="chev-${o.id}">▶</span>
-          </div>
-          <div class="order-lines" id="lines-${o.id}">
-            <table>
-              <thead><tr><th>Product / Description</th><th>Quantity</th><th style="text-align:right">Value</th></tr></thead>
-              <tbody>${linesHtml}</tbody>
-            </table>
-          </div>
-        </div>`;
-      });
+            groups[dk].forEach(o => { html += buildOrderCard(o, today); });
     });
 
     content.innerHTML = html;
