@@ -98,6 +98,9 @@ exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
   try {
     const uid = await getUid();
+    const year = new Date().getFullYear();
+    const yearStart = year + '-01-01 00:00:00';
+    const yearEnd   = (year + 1) + '-01-01 00:00:00';
     const FIELDS = ['id','name','create_date','date_closed','date_deadline','expected_revenue',
                     'probability','active','lost_reason_id','stage_id','partner_id','user_id','source_id'];
 
@@ -106,7 +109,7 @@ exports.handler = async function(event) {
     const [activeLeads, pipelineLeads, lostLeads, wonLeads, soRows] = await Promise.all([
       // Q1: active leads created in 2026
       odooCall(uid, 'crm.lead', 'search_read',
-        [[['active','=',true],['create_date','>=','2026-01-01 00:00:00'],['create_date','<','2027-01-01 00:00:00']]],
+        [[['active','=',true],['create_date','>=',yearStart],['create_date','<',yearEnd]]],
         { fields: FIELDS, limit: 500, order: 'create_date asc' }),
 
       // Q2: all active pipeline-stage deals
@@ -116,12 +119,12 @@ exports.handler = async function(event) {
 
       // Q3: lost/archived leads created in 2026
       odooCall(uid, 'crm.lead', 'search_read',
-        [[['active','=',false],['create_date','>=','2026-01-01 00:00:00'],['create_date','<','2027-01-01 00:00:00']]],
+        [[['active','=',false],['create_date','>=',yearStart],['create_date','<',yearEnd]]],
         { fields: FIELDS, limit: 500, order: 'create_date asc' }),
 
       // Q4: won leads closed in 2026
       odooCall(uid, 'crm.lead', 'search_read',
-        [[['active','=',true],['probability','=',100],['date_closed','>=','2026-01-01'],['date_closed','<','2027-01-01']]],
+        [[['active','=',true],['probability','=',100],['date_closed','>=',yearStart.slice(0,10)],['date_closed','<',yearEnd.slice(0,10)]]],
         { fields: FIELDS, limit: 500 }),
 
       // Q5: GP from sale orders linked to CRM opportunities
