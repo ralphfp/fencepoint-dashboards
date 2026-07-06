@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CRM Pipeline 2026 — Fencepoint</title>
+<title>CRM Pipeline — Fencepoint</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
 <style>
   :root {
@@ -130,20 +130,8 @@
   <div class="filter-bar">
     <span class="filter-lbl">Filter by month:</span>
     <input type="radio" name="month" id="m-all" class="month-radio" value="all" checked>
-    <label for="m-all" class="month-btn">All 2026</label>
-    <input type="radio" name="month" id="m-01" class="month-radio" value="2026-01">
-    <label for="m-01" class="month-btn">Jan</label>
-    <input type="radio" name="month" id="m-02" class="month-radio" value="2026-02">
-    <label for="m-02" class="month-btn">Feb</label>
-    <input type="radio" name="month" id="m-03" class="month-radio" value="2026-03">
-    <label for="m-03" class="month-btn">Mar</label>
-    <input type="radio" name="month" id="m-04" class="month-radio" value="2026-04">
-    <label for="m-04" class="month-btn">Apr</label>
-    <input type="radio" name="month" id="m-05" class="month-radio" value="2026-05">
-    <label for="m-05" class="month-btn">May</label>
-    <input type="radio" name="month" id="m-06" class="month-radio" value="2026-06">
-    <label for="m-06" class="month-btn">Jun</label>
-  </div>
+    <label for="m-all" class="month-btn" id="lbl-all">All</label>
+    <span id="month-btns"></span>
 
   <div class="kpi-grid">
     <div class="kpi c1"><div class="kpi-lbl">Deals Created</div><div class="kpi-val" id="kv-created">—</div><div class="kpi-sub" id="ks-created"></div></div>
@@ -207,8 +195,28 @@
 </div>
 
 <script>
-const MONTHS   = ['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
-const MLBLS    = ['Jan 2026','Feb 2026','Mar 2026','Apr 2026','May 2026','Jun 2026'];
+// Auto-generate months for the current year up to current month
+const CY = new Date().getFullYear();
+const CM = new Date().getMonth() + 1; // 1-12
+const MONTHS = Array.from({length: CM}, (_, i) => CY + '-' + String(i+1).padStart(2,'0'));
+const MN_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MLBLS = MONTHS.map(m => MN_SHORT[parseInt(m.slice(5))-1] + ' ' + CY);
+
+// Dynamically build month filter buttons
+document.getElementById('lbl-all').textContent = 'All ' + CY;
+const btnContainer = document.getElementById('month-btns');
+MONTHS.forEach((m, i) => {
+  const inp = document.createElement('input');
+  inp.type = 'radio'; inp.name = 'month'; inp.id = 'm-' + m.slice(5);
+  inp.className = 'month-radio'; inp.value = m;
+  const lbl = document.createElement('label');
+  lbl.htmlFor = 'm-' + m.slice(5);
+  lbl.className = 'month-btn';
+  lbl.textContent = MN_SHORT[i];
+  btnContainer.appendChild(inp);
+  btnContainer.appendChild(lbl);
+  inp.addEventListener('change', () => renderKPIs(m));
+});
 const ODOO_BASE = 'https://fencepoint.odoo.com';
 function odooLink(id) { return `${ODOO_BASE}/odoo/crm/${id}`; }
 const RC = ['#F37032','#43474F','#FDB913','#7ACCC8','#E85D1E','#6B7280','#B88000','#4AA8A4','#FFB380','#8C9099'];
@@ -298,7 +306,7 @@ function buildState(activeDeals2026, pipelineDeals, lostDeals, wonDeals2026, gpM
 function renderKPIs(m) {
   let c,w,l,op,v,conv,sub;
   let vconv, qv;
-  if (m==='all') { ({created:c,won:w,lost:l,open:op,wonValue:v,conv,quotedValue:qv,valueConv:vconv}=S.kpi); sub='All opportunities in 2026'; }
+  if (m==='all') { ({created:c,won:w,lost:l,open:op,wonValue:v,conv,quotedValue:qv,valueConv:vconv}=S.kpi); sub='All opportunities in ' + CY + ''; }
   else { const d=S.mo[m]; c=d.created;w=d.won;l=d.lost;op=d.open;v=d.wonValue;qv=d.quotedValue;
           conv=c>0?((w/c)*100).toFixed(1):'0';
           vconv=qv>0?((v/qv)*100).toFixed(1):'0';
