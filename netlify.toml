@@ -15,3 +15,6 @@
 
 [functions."stock-forecast-drill"]
   timeout = 30
+
+[functions."stock-forecast-query2"]
+  timeout = 30
