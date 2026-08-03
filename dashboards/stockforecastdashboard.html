@@ -358,7 +358,7 @@ function closeOrdersModal() {
   document.getElementById('ordersModal').classList.remove('open');
 }
 
-async function showPipelineOrders(normSku, pids) {
+async function showPipelineOrders(normSku, pids) {  // pids is array
   const rowData = allRows.find(r => r.sku === normSku);
   const name = rowData ? rowData.name.replace(/^\[.*?\]\s*/, '') : normSku;
   // Lead-time cutoff for urgency colouring — use the LONGEST lead time across all variants
@@ -381,7 +381,7 @@ async function showPipelineOrders(normSku, pids) {
 
     // Fetch pipeline orders via drill API
     const drillResp = await fetch(DRILL_API, {method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({type:'pipeline_orders', pidList: pidList})});
+      body: JSON.stringify({type:'pipeline_orders', pids: pids})});
     const drillData = await drillResp.json();
     const soLineRows = drillData.soLines || [];
     const soIdSet = [...new Set(soLineRows.map(l => Number(l.order_id)))];
@@ -469,7 +469,7 @@ async function showReservedOrders(normSku, pids) {
 
     // Fetch SO lines for this product + confirmed SO headers in parallel
     const confResp = await fetch(DRILL_API, {method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({type:'confirmed_orders', pidList})});
+      body: JSON.stringify({type:'confirmed_orders', pids})});
     const confData = await confResp.json();
     const soLineRows = confData.soLines || [];
     const soIdSet = [...new Set(soLineRows.map(l => Number(l.order_id)))];
@@ -560,7 +560,7 @@ async function showPhasing(normSku, pids) {
       // ── KITS: outgoing = SO lines for kit product; incoming = component PO lines ──
       // ── KITS: fetch via drill API ──
       const phasKitResp = await fetch(DRILL_API, {method:'POST',headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({type:'phasing_kit', pidList})});
+        body: JSON.stringify({type:'phasing_kit', pids})});
       const phasKitData = await phasKitResp.json();
       const soLineRows = phasKitData.soLines || [];
       const soIdSet = [...new Set(soLineRows.map(l => Number(l.order_id)))];
@@ -624,7 +624,7 @@ async function showPhasing(normSku, pids) {
     } else {
       // ── NON-KITS: fetch via drill API ──
       const phasNKResp = await fetch(DRILL_API, {method:'POST',headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({type:'phasing_nonkit', pidList})});
+        body: JSON.stringify({type:'phasing_nonkit', pids})});
       const phasNKData = await phasNKResp.json();
       const pickingDateMap = {};
       const soOrigins = new Set();
@@ -902,27 +902,45 @@ async function loadData() {
     const apiData = await apiResp.json();
     if (apiData.error) throw new Error(apiData.error);
 
-    const productRows      = apiData.products       || [];
-    const supplierRows     = apiData.suppliers      || [];
-    const stockRows_raw    = apiData.stock          || [];
-    const bomHeaderRows    = apiData.bomHeaders     || [];
-    const bomLineRows      = apiData.bomLines       || [];
-    const demandRows_raw   = apiData.pipelineDemand || [];
-    const confirmedDemandRows = apiData.confirmedDemand || [];
-    const demandLineRows   = apiData.pipelineLines  || [];
-    const invoiceHeaderRows = apiData.invoiceHeaders || [];
-    const invoiceLineRows_raw = apiData.invoiceLines || [];
-    const confirmedPoRows  = apiData.poHeaders      || [];
-    const poLineRows_raw   = apiData.poLines        || [];
-    const runRateRows      = apiData.runRate        || [];
-    const lastMonthRows    = apiData.lastMonthRate  || [];
+    // New API returns pre-aggregated maps for performance
+    const productRows      = apiData.products        || [];
+    const supplierMap_api  = apiData.supplierMap     || {};
+    const stockMap_api     = apiData.stockMap        || {};
+    const bomMap_api       = apiData.bomMap          || {};
+    const pipelineDemandMap_api  = apiData.pipelineDemandMap  || {};
+    const pipelineNominalMap_api = apiData.pipelineNominalMap || {};
+    const pipelineLinesMap_api   = apiData.pipelineLinesMap   || {};
+    const confirmedDemandMap_api = apiData.confirmedDemandMap || {};
+    const invoiceDateMap_api     = apiData.invoiceDateMap     || {};
+    const invoiceLineRows_raw    = apiData.invoiceLines       || [];
+    const poMap_api         = apiData.poMap        || {};
+    const poLinesAll_api    = apiData.poLinesAll   || [];
+    const lastPriceMap_api  = apiData.lastPriceMap || {};
+    const runRateMap_api    = apiData.runRateMap   || {};
+    const lastMonthMap_api  = apiData.lastMonthMap || {};
+    const sigmaTrimmedMap_api = apiData.sigmaTrimmedMap || {};
 
     setStep(0, productRows.length > 0 ? 'done' : 'failed',
-      `Stocked products (${productRows.length}) &amp; suppliers (${supplierRows.length})`);
+      `Stocked products (${productRows.length})`);
 
-    // ── Step 1: Stock — already loaded from Netlify function ──
-    const stockRows = stockRows_raw;
-    setStep(1, stockRows.length > 0 ? 'done' : 'failed', `Stock levels (${stockRows.length} products)`);
+    // ── Steps 1-4: All data pre-aggregated by Netlify function ──
+    // Inject pre-aggregated maps so existing step logic works unchanged
+    const stockMap    = stockMap_api;
+    const demandMap   = pipelineDemandMap_api;
+    const nominalMap  = pipelineNominalMap_api;
+    const poMap       = poMap_api;
+    const supplierMap = {};
+    // Convert supplierMap_api (keyed by tmplId string) to work with existing code
+    Object.entries(supplierMap_api).forEach(([k,v]) => { supplierMap[Number(k)] = v; });
+    // Inject poLinesAll and lastPriceMap globally
+    poLinesAll = poLinesAll_api;
+    const lastPriceMap = lastPriceMap_api;
+    const runRateMap   = runRateMap_api;
+    const lastMonthMap = lastMonthMap_api;
+    const sigmaTrimmedMap = sigmaTrimmedMap_api;
+
+    setStep(1, Object.keys(stockMap).length > 0 ? 'done' : 'failed',
+      `Stock levels (${Object.keys(stockMap).length} products)`);
 
     // ── Step 2: Kit & gate BoMs ──
     // Run as TWO separate queries to avoid column-name collisions in JOINs.
@@ -930,33 +948,14 @@ async function loadData() {
     // two columns both named "product_qty" and "product_id" — the second overwrites
     // the first, giving wrong data. Split queries have no ambiguous column names.
     // ── Step 2: BoMs — already loaded from Netlify function ──
-    setStep(2, bomHeaderRows.length > 0 ? 'done' : 'failed',
-      `${bomHeaderRows.length} kit BoMs, ${bomLineRows.length} component lines`);
-    dbg(`BoM headers: ${bomHeaderRows.length}, lines: ${bomLineRows.length}`);
+    globalBomMap = bomMap_api;
+    const bomMap = bomMap_api;
+    setStep(2, Object.keys(bomMap).length > 0 ? 'done' : 'failed',
+      `${Object.keys(bomMap).length} kit BoMs loaded`);
+    // BoM map already built by Netlify function
 
-    // Build BoM id → tmplId + bom_qty lookup
-    const bomIdToTmpl = {};
-    for (const row of bomHeaderRows) {
-      bomIdToTmpl[Number(row.id)] = {
-        tmplId:  Number(row.product_tmpl_id),
-        bom_qty: parseFloat(row.product_qty) || 1,
-      };
-    }
-
-    // Build BoM map: product_tmpl_id → { bom_qty, components: [{pid, qty}] }
-    const bomMap = {};
-    for (const row of bomLineRows) {
-      const header = bomIdToTmpl[Number(row.bom_id)];
-      if (!header) continue; // not a phantom BoM, skip
-      const { tmplId, bom_qty } = header;
-      if (!bomMap[tmplId]) bomMap[tmplId] = { bom_qty, components: [] };
-      bomMap[tmplId].components.push({
-        pid: Number(row.product_id),
-        qty: parseFloat(row.product_qty) || 1,
-      });
-    }
+    // BoM map already built by Netlify function — globalBomMap set above
     dbg(`bomMap entries: ${Object.keys(bomMap).length}`);
-    globalBomMap = bomMap; // expose for showPhasing
 
     // Fetch default_code for all BoM component pids (bare posts are not stocked items
     // so they won't be in productMap — we need a separate targeted lookup).
@@ -964,7 +963,7 @@ async function loadData() {
     const allCompPids = [...new Set(Object.values(bomMap).flatMap(b => b.components.map(c => c.pid)))];
     if (allCompPids.length > 0) {
       const compResp = await fetch(DRILL_API, {method:'POST',headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({type:'comp_codes', pidList: allCompPids.join(',')})});
+        body: JSON.stringify({type:'comp_codes', pids: allCompPids})});
       const compData = await compResp.json();
       for (const r of (compData.rows || [])) {
         compCodeMap[Number(r.id)] = r.default_code || '';
@@ -983,8 +982,16 @@ async function loadData() {
     const histStart = new Date(); histStart.setDate(histStart.getDate() - 182); // 26 weeks
     const histStartStr = histStart.toISOString().slice(0,10);
     // ── Step 3: Demand — already loaded from Netlify function ──
-    let demandRows = demandRows_raw;
-    // confirmedDemandRows already set above
+    // Use pre-aggregated maps directly — skip raw row processing
+    const confirmedDemandMap = confirmedDemandMap_api;
+    const pipelineLinesMap   = pipelineLinesMap_api;
+    let demandRows = Object.entries(pipelineDemandMap_api).map(([pid,wq]) => ({
+      product_id: Number(pid),
+      weighted_qty: wq,
+      nominal_qty: pipelineNominalMap_api[pid] || 0,
+    }));
+    const confirmedDemandRows = Object.entries(confirmedDemandMap_api).map(([pid,qty]) => ({
+      product_id: Number(pid), confirmed_qty: qty }));
     // Build per-product pipeline lines for time-phased urgency (close_date from CRM)
     const pipelineLinesMap = {}; // pid → [{qty, prob, close_date}]
     for (const r of parseResult(demandLineRaw)) {
@@ -997,36 +1004,12 @@ async function loadData() {
       });
     }
     dbg(`Pipeline lines: ${Object.values(pipelineLinesMap).reduce((s,a)=>s+a.length,0)} lines across ${Object.keys(pipelineLinesMap).length} products`);
-    // Invoice data — already loaded from Netlify function
-    const invoiceDateMap = {}; // move_id → invoice_date
-    for (const r of invoiceHeaderRows) invoiceDateMap[String(r.id)] = r.invoice_date;
-    const invoiceLineRows = invoiceLineRows_raw.filter(r => invoiceDateMap[String(r.move_id)]);
-    // Build weekly demand map: product_id → week → qty
-    const weeklyByPid = {};
-    for (const r of invoiceLineRows) {
-      const pid = Number(r.product_id);
-      const dateStr = invoiceDateMap[String(r.move_id)];
-      if (!dateStr) continue;
-      const d = new Date(dateStr);
-      const year = d.getFullYear();
-      const startOfYear = new Date(year, 0, 1);
-      const weekNum = Math.ceil(((d - startOfYear) / 86400000 + startOfYear.getDay() + 1) / 7);
-      const wk = year + '-' + weekNum;
-      if (!weeklyByPid[pid]) weeklyByPid[pid] = {};
-      weeklyByPid[pid][wk] = (weeklyByPid[pid][wk] || 0) + (parseFloat(r.qty_sold) || 0);
-    }
-    // Compute trimmed σ per product (top 10% removed, 95% service level Z=1.65)
-    const sigmaTrimmedMap = {}; // pid → trimmed weekly σ
-    for (const [pidStr, weekMap] of Object.entries(weeklyByPid)) {
-      const weeks = Object.values(weekMap).sort((a,b) => a-b);
-      const cutIdx = Math.floor(weeks.length * 0.90);
-      const trimmed = weeks.slice(0, cutIdx);
-      if (trimmed.length < 4) continue;
-      const mean = trimmed.reduce((s,v) => s+v, 0) / trimmed.length;
-      const variance = trimmed.reduce((s,v) => s + (v-mean)**2, 0) / (trimmed.length - 1);
-      sigmaTrimmedMap[Number(pidStr)] = Math.sqrt(variance);
-    }
-    dbg(`Trimmed σ computed for ${Object.keys(sigmaTrimmedMap).length} products`);
+    // Invoice data — use pre-aggregated from Netlify function
+    const invoiceDateMap = invoiceDateMap_api;
+    const invoiceLineRows = invoiceLineRows_raw.filter(r => invoiceDateMap[String(
+      Array.isArray(r.move_id) ? r.move_id[0] : r.move_id)]);
+    // sigmaTrimmedMap pre-computed by Netlify function
+    dbg(`Trimmed σ: ${Object.keys(sigmaTrimmedMap).length} products`);
     setStep(3, demandRows.length > 0 ? 'done' : 'failed',
       `Pipeline (${demandRows.length}) + confirmed orders (${confirmedDemandRows.length} products)`);
 
@@ -1061,20 +1044,19 @@ async function loadData() {
     const _threeMonthsAgo = new Date(Date.now() - 91 * 86400000).toISOString().slice(0, 10);
     const _oneMonthAgo    = new Date(Date.now() - 31 * 86400000).toISOString().slice(0, 10);
     // ── Step 4: POs + run rate — already loaded from Netlify function ──
-    setStep(4, 'active', 'Processing incoming POs…');
-    const runRateMap = {};
-    for (const r of runRateRows) runRateMap[Number(r.product_id)] = parseFloat(r.monthly_rate) || 0;
-    // lastMonthRows already set above
-    const lastMonthMap = {};
-    for (const r of lastMonthRows) lastMonthMap[Number(r.product_id)] = parseFloat(r.last_month_qty) || 0;
-    const confirmedPoIds  = new Set(confirmedPoRows.map(r => String(r.id)));
+    setStep(4, Object.keys(poMap).length > 0 ? 'done' : 'failed',
+      `Incoming POs (${Object.keys(poMap).length} products)`);
+    // runRateMap already injected from API data above
+    // lastMonthMap already set above
+    // lastMonthMap already injected from API data above
+    const confirmedPoIds  = new Set(poLinesAll_api.map(r => String(r.order_id)));
     // Build map of PO id → date_order for finding most recent PO per product
     const poDateMap = {};
-    for (const r of confirmedPoRows) poDateMap[String(r.id)] = r.date_order || '';
+    poLinesAll_api.forEach(r => { if(r.order_id) poDateMap[String(r.order_id)] = r.date_planned||''; });
     // Build PO info map (id → {name, supplier}) for phase drill-down
     const poInfoMap = {};
-    for (const r of confirmedPoRows) poInfoMap[String(r.id)] = { name: r.name, supplier: r.partner_id_label };
-    const poLineRows = poLineRows_raw.filter(r => confirmedPoIds.has(String(r.order_id)));
+    poLinesAll_api.forEach(r => { if(r.order_id) poInfoMap[String(r.order_id)] = { name: r.po_name||'', supplier: r.supplier||'' }; });
+    // poLinesAll already filtered in Netlify function
     // confirmedDemandRows already fetched in parallel with pipeline demand (step 3)
     const confirmedDemandMap = {};
     for (const r of confirmedDemandRows) {
@@ -1117,7 +1099,7 @@ async function loadData() {
     // ── Step 5: Build rows ──
     setStep(5, 'active', 'Building recommendations…');
 
-    const stockMap    = toMap(stockRows,  'product_id');
+    // stockMap already injected from API data above
     const demandMap   = groupSum(demandRows, 'product_id', 'weighted_qty');
     const nominalMap  = groupSum(demandRows, 'product_id', 'nominal_qty');
     const poMap       = groupSum(poRows,   'product_id', 'incoming');
@@ -1212,7 +1194,7 @@ async function loadData() {
           const chunk  = barePostCodes.slice(i, i + CHUNK);
           const inList = chunk.map(c => `'${c}'`).join(',');
           const bpResp = await fetch(DRILL_API, {method:'POST',headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({type:'bare_posts', pidList: inList})});
+            body: JSON.stringify({type:'bare_posts', pids: chunk})});
           const bpData = await bpResp.json();
           for (const r of (bpData.rows || [])) {
             const pid     = Number(r.id);
