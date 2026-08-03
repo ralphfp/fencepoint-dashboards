@@ -78,33 +78,33 @@ exports.handler = async function(event) {
     const uid = await getUid();
 
     const LOC_IDS = [8,11,23,24,25,26,27,28,29,30,31,32,33,34,35,36];
-    const today = new Date();
     const threeMonthsAgo = new Date(Date.now() - 91*86400000).toISOString().slice(0,10);
-    const oneMonthAgo    = new Date(Date.now() - 31*86400000).toISOString().slice(0,10);
     const histStart      = new Date(Date.now() - 182*86400000).toISOString().slice(0,10);
 
-    // ── Step 0: Stocked product templates ──
-    const stockedTmplRecs = await odooCall(uid, 'product.template', 'search_read',
-      [[['x_studio_stocked_item','=',true],['active','=',true]]],
-      { fields: ['id'], limit: 2000 });
-    const stockedTmplIds = stockedTmplRecs.map(r => r.id);
+    // ── SINGLE PARALLEL BATCH: all independent queries at once ──
+    const [
+      stockedTmplRecs,
+      stockRecs,
+      bomHeaders,
+      bomLines,
+      confirmedDemandLines,
+      quotedSoLines,
+      quotedSoHeaders,     // includes opportunity_id + state
+      crmLeads,            // all active leads with probability + close date
+      invoiceHeaders,
+      invoiceLines,
+      poHeaders,
+      poLines,
+      suppliers,
+    ] = await Promise.all([
 
-    // ── Parallel group 1: products, suppliers, stock, BoMs ──
-    const [products, suppliers, stockRecs, bomHeaders, bomLines] = await Promise.all([
-
-      stockedTmplIds.length > 0
-        ? odooCall(uid, 'product.product', 'search_read',
-            [[['active','=',true],['product_tmpl_id','in',stockedTmplIds]]],
-            { fields: ['id','product_tmpl_id','default_code','name'], limit: 3000 })
-        : Promise.resolve([]),
-
-      odooCall(uid, 'product.supplierinfo', 'search_read',
-        [[['delay','>',0]]],
-        { fields: ['product_tmpl_id','delay','price'], limit: 5000 }),
+      odooCall(uid, 'product.template', 'search_read',
+        [[['x_studio_stocked_item','=',true],['active','=',true]]],
+        { fields: ['id'], limit: 2000 }),
 
       odooCall(uid, 'stock.quant', 'search_read',
-        [[['location_id','in',LOC_IDS]]],
-        { fields: ['product_id','quantity','reserved_quantity'], limit: 3000 }),
+        [[['location_id','in',LOC_IDS],['quantity','>',0]]],
+        { fields: ['product_id','quantity','reserved_quantity'], limit: 5000 }),
 
       odooCall(uid, 'mrp.bom', 'search_read',
         [[['type','=','phantom']]],
@@ -113,161 +113,65 @@ exports.handler = async function(event) {
       odooCall(uid, 'mrp.bom.line', 'search_read',
         [[]],
         { fields: ['bom_id','product_id','product_qty'], limit: 3000 }),
-    ]);
-
-    // ── Parallel group 2: demand, pipeline, invoice headers, PO headers ──
-    const [pipelineDemand, confirmedDemand, pipelineLines, invoiceHeaders, poHeaders, runRate, lastMonthRate] = await Promise.all([
-
-      // CRM-weighted pipeline demand
-      odooCall(uid, 'sale.order.line', 'search_read',
-        [[['order_id.state','in',['draft','sent']],['product_uom_qty','>',0]]],
-        { fields: ['order_id','product_id','product_uom_qty'], limit: 3000 }),
 
       // Confirmed undelivered demand
       odooCall(uid, 'sale.order.line', 'search_read',
-        [[['order_id.state','=','sale'],['product_uom_qty','>',0]]],
-        { fields: ['order_id','product_id','product_uom_qty','qty_delivered'], limit: 3000 }),
+        [[['order_id.state','=','sale'],
+          ['product_uom_qty','>',0],
+          ['qty_delivered','<','product_uom_qty']]],
+        { fields: ['product_id','product_uom_qty','qty_delivered'], limit: 3000 }),
 
-      // Pipeline lines with CRM close dates
+      // Quoted SO lines
+      odooCall(uid, 'sale.order.line', 'search_read',
+        [[['order_id.state','in',['draft','sent']],['product_uom_qty','>',0]]],
+        { fields: ['product_id','product_uom_qty','order_id'], limit: 3000 }),
+
+      // SO headers for quoted lines — includes opportunity_id and state
+      odooCall(uid, 'sale.order', 'search_read',
+        [[['state','in',['draft','sent']]]],
+        { fields: ['id','state','opportunity_id'], limit: 2000 }),
+
+      // All active CRM leads with probability + close date
       odooCall(uid, 'crm.lead', 'search_read',
-        [[['active','=',true],['stage_id.name','not in',['Won','Lost']]]],
-        { fields: ['id','probability','date_deadline'], limit: 2000 }),
+        [[['active','=',true]]],
+        { fields: ['id','probability','date_deadline'], limit: 3000 }),
 
-      // Invoice headers for run rate (last 26 weeks)
+      // Invoice headers for run rate
       odooCall(uid, 'account.move', 'search_read',
         [[['move_type','=','out_invoice'],['state','=','posted'],
           ['invoice_date','>=',histStart]]],
         { fields: ['id','invoice_date'], limit: 3000 }),
 
-      // PO headers
+      // Invoice lines for run rate
+      odooCall(uid, 'account.move.line', 'search_read',
+        [[['move_id.move_type','=','out_invoice'],['move_id.state','=','posted'],
+          ['move_id.invoice_date','>=',threeMonthsAgo],
+          ['quantity','>',0],['product_id','!=',false]]],
+        { fields: ['product_id','quantity','move_id'], limit: 5000 }),
+
       odooCall(uid, 'purchase.order', 'search_read',
         [[['state','in',['purchase','done']]]],
         { fields: ['id','name','partner_id','date_order'], limit: 2000 }),
 
-      // 3-month run rate from invoice lines
-      odooCall(uid, 'account.move.line', 'search_read',
-        [[['move_id.move_type','=','out_invoice'],['move_id.state','=','posted'],
-          ['move_id.invoice_date','>=',threeMonthsAgo],['quantity','>',0],
-          ['product_id','!=',false]]],
-        { fields: ['product_id','quantity'], limit: 5000 }),
-
-      // Last month rate
-      odooCall(uid, 'account.move.line', 'search_read',
-        [[['move_id.move_type','=','out_invoice'],['move_id.state','=','posted'],
-          ['move_id.invoice_date','>=',oneMonthAgo],['quantity','>',0],
-          ['product_id','!=',false]]],
-        { fields: ['product_id','quantity'], limit: 5000 }),
-    ]);
-
-    // Get sale order states for pipeline demand weighting
-    const quoteSoIds = [...new Set(pipelineDemand.map(l =>
-      Array.isArray(l.order_id) ? l.order_id[0] : l.order_id))];
-    let soStates = [];
-    if (quoteSoIds.length > 0) {
-      soStates = await odooCall(uid, 'sale.order', 'search_read',
-        [[['id','in',quoteSoIds]]],
-        { fields: ['id','state','opportunity_id'], limit: 2000 });
-    }
-
-    // ── Parallel group 3: invoice lines, PO lines ──
-    const allInvIds = invoiceHeaders.map(i => i.id);
-    const [invoiceLines, poLines] = await Promise.all([
-
-      allInvIds.length > 0
-        ? odooSearchAll(uid, 'account.move.line',
-            [['move_id','in',allInvIds],['quantity','>',0],['product_id','!=',false]],
-            ['move_id','product_id','quantity'], 2000)
-        : Promise.resolve([]),
-
       odooCall(uid, 'purchase.order.line', 'search_read',
-        [[['qty_received','<','product_qty']]],
+        [[['qty_received','<','product_qty'],['product_qty','>',0]]],
         { fields: ['order_id','product_id','product_qty','qty_received','date_planned','price_unit'], limit: 2000 }),
+
+      odooCall(uid, 'product.supplierinfo', 'search_read',
+        [[['delay','>',0]]],
+        { fields: ['product_tmpl_id','delay','price'], limit: 5000 }),
     ]);
 
-    // Aggregate run rate by product
-    const runRateMap = {};
-    runRate.forEach(r => {
-      const pid = Array.isArray(r.product_id) ? r.product_id[0] : r.product_id;
-      runRateMap[pid] = (runRateMap[pid]||0) + (r.quantity||0);
-    });
-    Object.keys(runRateMap).forEach(k => { runRateMap[k] = runRateMap[k] / 3; });
+    // ── Round trip 2: Products (needs stocked IDs from trip 1) ──
+    const stockedTmplIds = stockedTmplRecs.map(r => r.id);
+    const products = stockedTmplIds.length > 0
+      ? await odooCall(uid, 'product.product', 'search_read',
+          [[['active','=',true],['product_tmpl_id','in',stockedTmplIds]]],
+          { fields: ['id','product_tmpl_id','default_code'], limit: 3000 })
+      : [];
 
-    const lastMonthMap = {};
-    lastMonthRate.forEach(r => {
-      const pid = Array.isArray(r.product_id) ? r.product_id[0] : r.product_id;
-      lastMonthMap[pid] = (lastMonthMap[pid]||0) + (r.quantity||0);
-    });
+    // ── Aggregate ──
 
-    // Aggregate confirmed demand by product
-    const confirmedDemandMap = {};
-    confirmedDemand.forEach(l => {
-      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
-      const undelivered = (l.product_uom_qty||0) - (l.qty_delivered||0);
-      if (undelivered > 0) confirmedDemandMap[pid] = (confirmedDemandMap[pid]||0) + undelivered;
-    });
-
-    // Build CRM lead map
-    const crmLeadMap = {};
-    pipelineLines.forEach(l => { crmLeadMap[l.id] = l; });
-
-    // Build SO → opportunity map
-    const soOppMap = {};
-    soStates.forEach(s => {
-      const oppId = Array.isArray(s.opportunity_id) ? s.opportunity_id[0] : s.opportunity_id;
-      soOppMap[s.id] = { state: s.state, oppId };
-    });
-
-    // Aggregate pipeline demand by product with CRM weighting
-    const pipelineDemandMap = {}, pipelineNominalMap = {}, pipelineLinesMap = {};
-    pipelineDemand.forEach(l => {
-      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
-      const soId = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
-      const so = soOppMap[soId] || {};
-      const crm = so.oppId ? crmLeadMap[so.oppId] : null;
-      const prob = crm ? (crm.probability||20) : (so.state === 'sent' ? 60 : 30);
-      const closeDate = crm ? crm.date_deadline : null;
-      const qty = l.product_uom_qty || 0;
-      pipelineDemandMap[pid] = (pipelineDemandMap[pid]||0) + qty * prob / 100;
-      pipelineNominalMap[pid] = (pipelineNominalMap[pid]||0) + qty;
-      if (!pipelineLinesMap[pid]) pipelineLinesMap[pid] = [];
-      pipelineLinesMap[pid].push({ qty, prob, close_date: closeDate });
-    });
-
-    // Aggregate incoming PO by product
-    const poMap = {};
-    const poInfoMap = {};
-    const confirmedPoIds = new Set(poHeaders.map(p => p.id));
-    poHeaders.forEach(p => {
-      const suppName = Array.isArray(p.partner_id) ? p.partner_id[1] : '';
-      poInfoMap[p.id] = { name: p.name, supplier: suppName, date_order: p.date_order };
-    });
-    const poLinesAll = [];
-    poLines.forEach(l => {
-      const orderId = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
-      if (!confirmedPoIds.has(orderId)) return;
-      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
-      const incoming = (l.product_qty||0) - (l.qty_received||0);
-      if (incoming > 0) {
-        poMap[pid] = (poMap[pid]||0) + incoming;
-        const info = poInfoMap[orderId] || {};
-        poLinesAll.push({ product_id: pid, incoming, date_planned: l.date_planned,
-          order_id: orderId, po_name: info.name, supplier: info.supplier });
-      }
-    });
-
-    // Build last PO price map
-    const lastPriceMap = {};
-    poLines.forEach(l => {
-      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
-      const orderId = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
-      const price = l.price_unit || 0;
-      const date = (poInfoMap[orderId] || {}).date_order || '';
-      if (price > 0 && (!lastPriceMap[pid] || date > lastPriceMap[pid].date)) {
-        lastPriceMap[pid] = { price, date };
-      }
-    });
-
-    // Aggregate stock by product
     const stockMap = {};
     stockRecs.forEach(s => {
       const pid = Array.isArray(s.product_id) ? s.product_id[0] : s.product_id;
@@ -276,27 +180,13 @@ exports.handler = async function(event) {
       stockMap[pid].reserved_qty  += (s.reserved_quantity||0);
     });
 
-    // Aggregate supplier info by product template
     const supplierMap = {};
     suppliers.forEach(s => {
-      const tmplId = Array.isArray(s.product_tmpl_id) ? s.product_tmpl_id[0] : s.product_tmpl_id;
-      if (!supplierMap[tmplId] || s.delay < supplierMap[tmplId].delay) {
-        supplierMap[tmplId] = { lead_days: s.delay, unit_cost: s.price };
-      }
+      const tid = Array.isArray(s.product_tmpl_id) ? s.product_tmpl_id[0] : s.product_tmpl_id;
+      if (!supplierMap[tid] || s.delay < supplierMap[tid].lead_days)
+        supplierMap[tid] = { lead_days: s.delay, unit_cost: s.price };
     });
 
-    // Build product map
-    const productMap = {};
-    products.forEach(p => {
-      productMap[p.id] = {
-        id: p.id,
-        product_tmpl_id: Array.isArray(p.product_tmpl_id) ? p.product_tmpl_id[0] : p.product_tmpl_id,
-        product_tmpl_id_label: Array.isArray(p.product_tmpl_id) ? p.product_tmpl_id[1] : '',
-        default_code: p.default_code || '',
-      };
-    });
-
-    // Build BoM maps
     const bomIdToTmpl = {};
     bomHeaders.forEach(b => {
       bomIdToTmpl[b.id] = {
@@ -306,21 +196,93 @@ exports.handler = async function(event) {
     });
     const bomMap = {};
     bomLines.forEach(l => {
-      const header = bomIdToTmpl[Array.isArray(l.bom_id) ? l.bom_id[0] : l.bom_id];
-      if (!header) return;
-      const { tmplId, bom_qty } = header;
-      if (!bomMap[tmplId]) bomMap[tmplId] = { bom_qty, components: [] };
-      bomMap[tmplId].components.push({
+      const bid = Array.isArray(l.bom_id) ? l.bom_id[0] : l.bom_id;
+      const h = bomIdToTmpl[bid];
+      if (!h) return;
+      if (!bomMap[h.tmplId]) bomMap[h.tmplId] = { bom_qty: h.bom_qty, components: [] };
+      bomMap[h.tmplId].components.push({
         pid: Array.isArray(l.product_id) ? l.product_id[0] : l.product_id,
         qty: l.product_qty || 1,
       });
     });
 
-    // Invoice date map
+    const confirmedDemandMap = {};
+    confirmedDemandLines.forEach(l => {
+      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
+      const qty = (l.product_uom_qty||0) - (l.qty_delivered||0);
+      if (qty > 0) confirmedDemandMap[pid] = (confirmedDemandMap[pid]||0) + qty;
+    });
+
+    // CRM lead map
+    const crmLeadMap = {};
+    crmLeads.forEach(c => { crmLeadMap[c.id] = c; });
+
+    // SO → opportunity map
+    const soOppMap = {};
+    quotedSoHeaders.forEach(s => {
+      const oid = Array.isArray(s.opportunity_id) ? s.opportunity_id[0] : s.opportunity_id;
+      soOppMap[s.id] = { state: s.state, oppId: oid || null };
+    });
+
+    // Pipeline demand with CRM probability weighting
+    const pipelineDemandMap = {}, pipelineNominalMap = {}, pipelineLinesMap = {};
+    quotedSoLines.forEach(l => {
+      const pid   = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
+      const soId  = Array.isArray(l.order_id)   ? l.order_id[0]   : l.order_id;
+      const so    = soOppMap[soId] || {};
+      const crm   = so.oppId ? crmLeadMap[so.oppId] : null;
+      const prob  = crm ? (crm.probability || 20)
+                        : (so.state === 'sent' ? 60 : 30);
+      const closeDate = crm ? (crm.date_deadline || null) : null;
+      const qty   = l.product_uom_qty || 0;
+      pipelineDemandMap[pid]  = (pipelineDemandMap[pid]||0)  + qty * prob / 100;
+      pipelineNominalMap[pid] = (pipelineNominalMap[pid]||0) + qty;
+      if (!pipelineLinesMap[pid]) pipelineLinesMap[pid] = [];
+      pipelineLinesMap[pid].push({ qty, prob, close_date: closeDate });
+    });
+
+    // PO aggregation
+    const poMap = {}, poLinesAll = [], lastPriceMap = {}, poInfoMap = {};
+    const confirmedPoIds = new Set(poHeaders.map(p => p.id));
+    poHeaders.forEach(p => {
+      poInfoMap[p.id] = {
+        name: p.name,
+        supplier: Array.isArray(p.partner_id) ? p.partner_id[1] : '',
+        date_order: p.date_order,
+      };
+    });
+    poLines.forEach(l => {
+      const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
+      if (!confirmedPoIds.has(oid)) return;
+      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
+      const incoming = (l.product_qty||0) - (l.qty_received||0);
+      if (incoming <= 0) return;
+      poMap[pid] = (poMap[pid]||0) + incoming;
+      const info = poInfoMap[oid] || {};
+      poLinesAll.push({ product_id: pid, incoming,
+        date_planned: l.date_planned, order_id: oid,
+        po_name: info.name, supplier: info.supplier });
+      if (l.price_unit > 0 && (!lastPriceMap[pid] || info.date_order > (lastPriceMap[pid]||{}).date))
+        lastPriceMap[pid] = { price: l.price_unit, date: info.date_order };
+    });
+
+    // Run rate + last month from invoice lines
+    const runRateMap = {}, lastMonthMap = {};
+    const lastMonthCutoff = new Date(Date.now() - 31*86400000).toISOString().slice(0,10);
     const invoiceDateMap = {};
     invoiceHeaders.forEach(i => { invoiceDateMap[i.id] = i.invoice_date; });
 
-    // Weekly demand for run rate / sigma
+    invoiceLines.forEach(l => {
+      const pid  = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
+      const mid  = Array.isArray(l.move_id)    ? l.move_id[0]    : l.move_id;
+      const qty  = l.quantity || 0;
+      const date = invoiceDateMap[mid] || '';
+      runRateMap[pid]  = (runRateMap[pid]||0)  + qty;
+      if (date >= lastMonthCutoff) lastMonthMap[pid] = (lastMonthMap[pid]||0) + qty;
+    });
+    Object.keys(runRateMap).forEach(k => { runRateMap[k] = runRateMap[k] / 3; });
+
+    // Trimmed weekly sigma
     const weeklyByPid = {};
     invoiceLines.forEach(l => {
       const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
@@ -328,43 +290,36 @@ exports.handler = async function(event) {
       const dateStr = invoiceDateMap[mid];
       if (!dateStr) return;
       const d = new Date(dateStr);
-      const startOfYear = new Date(d.getFullYear(), 0, 1);
-      const wk = d.getFullYear() + '-' + Math.ceil(((d - startOfYear)/86400000 + startOfYear.getDay() + 1) / 7);
+      const wk = d.getFullYear() + '-W' +
+        Math.ceil(((d - new Date(d.getFullYear(),0,1))/86400000 + new Date(d.getFullYear(),0,1).getDay() + 1) / 7);
       if (!weeklyByPid[pid]) weeklyByPid[pid] = {};
       weeklyByPid[pid][wk] = (weeklyByPid[pid][wk]||0) + (l.quantity||0);
     });
-
     const sigmaTrimmedMap = {};
-    Object.entries(weeklyByPid).forEach(([pidStr, weekMap]) => {
-      const weeks = Object.values(weekMap).sort((a,b) => a-b);
-      const cutIdx = Math.floor(weeks.length * 0.90);
-      const trimmed = weeks.slice(0, cutIdx);
+    Object.entries(weeklyByPid).forEach(([pid, wks]) => {
+      const vals = Object.values(wks).sort((a,b)=>a-b);
+      const trimmed = vals.slice(0, Math.floor(vals.length * 0.9));
       if (trimmed.length < 4) return;
-      const mean = trimmed.reduce((s,v) => s+v, 0) / trimmed.length;
-      const variance = trimmed.reduce((s,v) => s + (v-mean)**2, 0) / (trimmed.length - 1);
-      sigmaTrimmedMap[Number(pidStr)] = Math.sqrt(variance);
+      const mean = trimmed.reduce((s,v)=>s+v,0) / trimmed.length;
+      const variance = trimmed.reduce((s,v)=>s+(v-mean)**2,0) / (trimmed.length-1);
+      sigmaTrimmedMap[Number(pid)] = Math.sqrt(variance);
     });
+
+    const productList = products.map(p => ({
+      id: p.id,
+      product_tmpl_id: Array.isArray(p.product_tmpl_id) ? p.product_tmpl_id[0] : p.product_tmpl_id,
+      product_tmpl_id_label: Array.isArray(p.product_tmpl_id) ? p.product_tmpl_id[1] : '',
+      default_code: p.default_code || '',
+    }));
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       body: JSON.stringify({
-        products: Object.values(productMap),
-        supplierMap,
-        stockMap,
-        bomMap,
-        pipelineDemandMap,
-        pipelineNominalMap,
-        pipelineLinesMap,
-        confirmedDemandMap,
-        invoiceDateMap,
-        invoiceLines,
-        poMap,
-        poLinesAll,
-        lastPriceMap,
-        runRateMap,
-        lastMonthMap,
-        sigmaTrimmedMap,
+        products: productList, supplierMap, stockMap, bomMap,
+        pipelineDemandMap, pipelineNominalMap, pipelineLinesMap,
+        confirmedDemandMap, invoiceDateMap, invoiceLines,
+        poMap, poLinesAll, lastPriceMap, runRateMap, lastMonthMap, sigmaTrimmedMap,
       }),
     };
 
