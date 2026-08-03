@@ -9,3 +9,9 @@
 
 [functions."customer-spend-drill"]
   timeout = 30
+
+[functions."stock-forecast-query"]
+  timeout = 30
+
+[functions."stock-forecast-drill"]
+  timeout = 30
