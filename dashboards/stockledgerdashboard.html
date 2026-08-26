@@ -518,7 +518,7 @@
 
   var GRAND_TOTAL = STATIC_GRAND_TOTAL;
   var groups = {};
-  var groupOrder = ["Commercial", "Timber", "Misc"];
+  var groupOrder = ["Commercial", "Timber", "Misc", "Obsolete"];
   groupOrder.forEach(function (name) {
     var g = STATIC_GROUPS[name];
     groups[name] = { value: g.value, skus: g.skus, sub: g.sub.map(function (s) { return {name: s.name, value: s.value, count: s.count}; }) };
