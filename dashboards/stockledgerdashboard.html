@@ -318,6 +318,21 @@
   .tile-meta { margin-top: 8px; font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
   .tile-bar-track { margin-top: 12px; height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
   .tile-bar-fill { height: 100%; background: var(--tile-color); border-radius: 3px; }
+  .tile-mini-chart { margin-top: 14px; width: 100%; height: 64px; display: block; overflow: visible; }
+  .tile-mini-line { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+  .tile-mini-area { opacity: 0.13; }
+  .tile-mini-crosshair { stroke: var(--border-strong); stroke-width: 1; pointer-events: none; }
+  .tile-mini-dot { stroke: var(--surface); stroke-width: 2; pointer-events: none; }
+  .tile-mini-tooltip {
+    position: absolute; pointer-events: none;
+    background: #1b2a38; color: #f5f2ea;
+    border-radius: 7px; padding: 5px 9px;
+    font-size: 11.5px; line-height: 1.4;
+    opacity: 0; transition: opacity 0.08s ease;
+    white-space: nowrap; z-index: 30;
+    transform: translate(-50%, -100%);
+  }
+  .tile { position: relative; }
   /* ---------- Drilldown ---------- */
   .drilldown {
     display: grid;
@@ -356,7 +371,7 @@
   .subrow:last-child { border-bottom: none; }
   .subrow .name { color: var(--text-primary); font-weight: 500; }
   .subrow .bar-track { height: 16px; border-radius: 4px; background: var(--surface-2); overflow: hidden; position: relative; }
-  .subrow .bar-fill { height: 100%; border-radius: 4px; }
+  .subrow .bar-fill { display: block; height: 100%; border-radius: 4px; }
   .subrow .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-primary); font-weight: 600; }
   .subrow .cnt { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 12px; }
   /* ---------- Footer ---------- */
@@ -429,6 +444,7 @@
 </div>
 
 <div class="wrap">
+<div class="tile-mini-tooltip" id="miniTooltip" style="position:fixed"></div>
   <div class="masthead">
     <div>
       <p class="masthead-eyebrow">Fencepoint Ltd &middot; Inventory</p>
@@ -496,6 +512,10 @@
   var trend = [{"date": "2026-06-03", "value": 406156.22, "wow_pct": null}, {"date": "2026-06-10", "value": 404483.62, "wow_pct": -0.4}, {"date": "2026-06-17", "value": 396822.62, "wow_pct": -1.9}, {"date": "2026-06-24", "value": 443652.9, "wow_pct": 11.8}, {"date": "2026-07-01", "value": 431602.37, "wow_pct": -2.7}, {"date": "2026-07-08", "value": 427652.91, "wow_pct": -0.9}, {"date": "2026-07-15", "value": 411329.09, "wow_pct": -3.8}, {"date": "2026-07-22", "value": 434829.53, "wow_pct": 5.7}, {"date": "2026-07-29", "value": 423140.24, "wow_pct": -2.7}, {"date": "2026-08-05", "value": 395955.92, "wow_pct": -6.4}, {"date": "2026-08-12", "value": 414543.91, "wow_pct": 4.7}, {"date": "2026-08-19", "value": 415287.98, "wow_pct": 0.2}, {"date": "2026-08-26", "value": 438004.83, "wow_pct": 5.5}];
   var STATIC_GROUPS = {"Commercial": {"value": 337373.34, "skus": 288, "sub": [{"name": "V Mesh", "value": 114148.46, "count": 71}, {"name": "868 Mesh", "value": 71967.87, "count": 54}, {"name": "358 Mesh", "value": 57433.92, "count": 38}, {"name": "Mesh Gates", "value": 52827.17, "count": 82}, {"name": "Palisade", "value": 20917.62, "count": 16}, {"name": "656 Mesh", "value": 14662.98, "count": 7}, {"name": "Uncategorised", "value": 3278.96, "count": 9}, {"name": "Non Stock", "value": 1636.56, "count": 8}, {"name": "Chainlink Fencing", "value": 499.8, "count": 3}]}, "Timber": {"value": 96989.53, "skus": 232, "sub": [{"name": "Posts", "value": 24425.09, "count": 31}, {"name": "Slats", "value": 19822.43, "count": 33}, {"name": "Rails", "value": 17837.05, "count": 12}, {"name": "Sawn Timber", "value": 13737.98, "count": 14}, {"name": "Landscaping", "value": 7648.59, "count": 11}, {"name": "Composites", "value": 5197.44, "count": 27}, {"name": "Accessories", "value": 4891.29, "count": 99}, {"name": "Aggregates", "value": 2409.92, "count": 1}, {"name": "Uncategorised", "value": 914.34, "count": 2}, {"name": "Panels", "value": 105.4, "count": 2}]}, "Misc": {"value": 3641.96, "skus": 24, "sub": [{"name": "Agricultural Fencing", "value": 2620.38, "count": 14}, {"name": "Miscellaneous", "value": 808.94, "count": 9}, {"name": "DONOTUSE", "value": 212.64, "count": 1}]}};
   var STATIC_GRAND_TOTAL = 438004.83;
+  STATIC_GROUPS["Obsolete"] = {"value": 0, "skus": 0, "sub": [{"name": "Obsolete Stock", "value": 0, "count": 0}]};
+  var GROUP_TRENDS = {"Commercial": [{"date": "2026-06-03", "value": 312841.94}, {"date": "2026-06-10", "value": 311553.62}, {"date": "2026-06-17", "value": 305652.73}, {"date": "2026-06-24", "value": 341723.77}, {"date": "2026-07-01", "value": 332441.84}, {"date": "2026-07-08", "value": 329399.77}, {"date": "2026-07-15", "value": 316826.34}, {"date": "2026-07-22", "value": 334927.56}, {"date": "2026-07-29", "value": 325923.89}, {"date": "2026-08-05", "value": 304985.16}, {"date": "2026-08-12", "value": 319302.56}, {"date": "2026-08-19", "value": 319875.68}, {"date": "2026-08-26", "value": 337373.34}], "Timber": [{"date": "2026-06-03", "value": 89937.14}, {"date": "2026-06-10", "value": 89566.77}, {"date": "2026-06-17", "value": 87870.35}, {"date": "2026-06-24", "value": 98240.21}, {"date": "2026-07-01", "value": 95571.8}, {"date": "2026-07-08", "value": 94697.25}, {"date": "2026-07-15", "value": 91082.59}, {"date": "2026-07-22", "value": 96286.41}, {"date": "2026-07-29", "value": 93697.99}, {"date": "2026-08-05", "value": 87678.44}, {"date": "2026-08-12", "value": 91794.46}, {"date": "2026-08-19", "value": 91959.23}, {"date": "2026-08-26", "value": 96989.53}], "Misc": [{"date": "2026-06-03", "value": 3377.14}, {"date": "2026-06-10", "value": 3363.23}, {"date": "2026-06-17", "value": 3299.53}, {"date": "2026-06-24", "value": 3688.92}, {"date": "2026-07-01", "value": 3588.72}, {"date": "2026-07-08", "value": 3555.88}, {"date": "2026-07-15", "value": 3420.15}, {"date": "2026-07-22", "value": 3615.56}, {"date": "2026-07-29", "value": 3518.36}, {"date": "2026-08-05", "value": 3292.33}, {"date": "2026-08-12", "value": 3446.89}, {"date": "2026-08-19", "value": 3453.07}, {"date": "2026-08-26", "value": 3641.96}]};
+  GROUP_TRENDS["Obsolete"] = [{"date": "2026-06-03", "value": 0}, {"date": "2026-06-10", "value": 0}, {"date": "2026-06-17", "value": 0}, {"date": "2026-06-24", "value": 0}, {"date": "2026-07-01", "value": 0}, {"date": "2026-07-08", "value": 0}, {"date": "2026-07-15", "value": 0}, {"date": "2026-07-22", "value": 0}, {"date": "2026-07-29", "value": 0}, {"date": "2026-08-05", "value": 0}, {"date": "2026-08-12", "value": 0}, {"date": "2026-08-19", "value": 0}, {"date": "2026-08-26", "value": 0}];
+
   var GRAND_TOTAL = STATIC_GRAND_TOTAL;
   var groups = {};
   var groupOrder = ["Commercial", "Timber", "Misc"];
@@ -517,6 +537,9 @@
     groups.Timber.colorHex = isDarkNow() ? "#d95926" : "#eb6834";
     groups.Misc.color = "var(--series-misc)";
     groups.Misc.colorHex = isDarkNow() ? "#199e70" : "#1baf7a";
+    if (!groups.Obsolete) groups.Obsolete = {value:0, skus:0, sub:[{name:"Obsolete Stock",value:0,count:0}]};
+    groups.Obsolete.color = "var(--series-obsolete)";
+    groups.Obsolete.colorHex = isDarkNow() ? "#c49030" : "#b07820";
   }
   function fmtGBP(v) { return "£" + Math.round(v).toLocaleString("en-GB"); }
   function fmtGBP2(v) { return "£" + v.toLocaleString("en-GB", {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
@@ -545,11 +568,14 @@
     return {bucket: "Misc", level1: root};
   }
   // ---------- turn a live qty map into the same shape as STATIC_GROUPS ----------
+  // Set of product IDs tagged Obsolete in Odoo (populated from live fetch)
+  var OBSOLETE_PIDS = new Set();
+
   function computeFromQtyMap(qtyMap) {
-    var top = {Commercial: 0, Timber: 0, Misc: 0};
-    var topCounts = {Commercial: 0, Timber: 0, Misc: 0};
-    var sub = {Commercial: {}, Timber: {}, Misc: {}};
-    var subCounts = {Commercial: {}, Timber: {}, Misc: {}};
+    var top = {Commercial: 0, Timber: 0, Misc: 0, Obsolete: 0};
+    var topCounts = {Commercial: 0, Timber: 0, Misc: 0, Obsolete: 0};
+    var sub = {Commercial: {}, Timber: {}, Misc: {}, Obsolete: {}};
+    var subCounts = {Commercial: {}, Timber: {}, Misc: {}, Obsolete: {}};
     var grand = 0, matched = 0, unmatched = 0;
     Object.keys(qtyMap).forEach(function (pid) {
       var qty = qtyMap[pid];
@@ -558,11 +584,18 @@
       if (!c) { unmatched++; return; }
       matched++;
       var val = qty * c.cost;
-      var cl = classify(c.categ);
-      top[cl.bucket] += val;
-      topCounts[cl.bucket] += 1;
-      sub[cl.bucket][cl.level1] = (sub[cl.bucket][cl.level1] || 0) + val;
-      subCounts[cl.bucket][cl.level1] = (subCounts[cl.bucket][cl.level1] || 0) + 1;
+      // Obsolete products override normal category classification
+      var bucket, level1;
+      if (OBSOLETE_PIDS.has(pid)) {
+        bucket = "Obsolete"; level1 = "Obsolete Stock";
+      } else {
+        var cl = classify(c.categ);
+        bucket = cl.bucket; level1 = cl.level1;
+      }
+      top[bucket] += val;
+      topCounts[bucket] += 1;
+      sub[bucket][level1] = (sub[bucket][level1] || 0) + val;
+      subCounts[bucket][level1] = (subCounts[bucket][level1] || 0) + 1;
       grand += val;
     });
     return {grand: grand, top: top, topCounts: topCounts, sub: sub, subCounts: subCounts, matched: matched, unmatched: unmatched};
@@ -578,6 +611,12 @@
       groups[name].sub = subArr;
     });
     GRAND_TOTAL = computed.grand;
+    // Update last point of each group trend with live value
+    groupOrder.forEach(function(name) {
+      var arr = GROUP_TRENDS[name];
+      if (!arr) { GROUP_TRENDS[name] = [{date: trend[trend.length-1].date, value: groups[name].value}]; return; }
+      if (arr.length > 0) arr[arr.length - 1].value = groups[name].value;
+    });
   }
   // ---------- render: hero ----------
   function renderHero() {
@@ -747,6 +786,63 @@
     drilldownEl.classList.add("open");
     openGroup = name;
   }
+
+  function renderMiniChart(svgEl, tooltipEl, trendData, colorHex) {
+    var W = 320, H = 64, padL = 4, padR = 4, padT = 8, padB = 16;
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+    var vals = trendData.map(function(d) { return d.value; });
+    var minV = Math.min.apply(null, vals), maxV = Math.max.apply(null, vals);
+    var rangeV = maxV - minV || 1;
+    function xOf(i) { return padL + (i / (vals.length - 1)) * plotW; }
+    function yOf(v) { return padT + (1 - (v - minV) / rangeV) * plotH; }
+
+    var pts = vals.map(function(v, i) { return xOf(i) + "," + yOf(v); }).join(" ");
+    var areaPath = "M" + xOf(0) + "," + (padT + plotH) +
+      " L" + vals.map(function(v,i){ return xOf(i)+","+yOf(v); }).join(" L") +
+      " L" + xOf(vals.length-1) + "," + (padT+plotH) + " Z";
+
+    svgEl.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svgEl.innerHTML =
+      '<path class="tile-mini-area" d="' + areaPath + '" fill="' + colorHex + '"/>' +
+      '<polyline class="tile-mini-line" points="' + pts + '" stroke="' + colorHex + '"/>' +
+      '<line class="tile-mini-crosshair" id="' + svgEl.id + '-ch" x1="-100" y1="' + padT + '" x2="-100" y2="' + (padT+plotH) + '" style="display:none"/>' +
+      '<circle class="tile-mini-dot" id="' + svgEl.id + '-dot" r="4" fill="' + colorHex + '" cx="-100" cy="-100" style="display:none"/>';
+
+    var hitRect = document.createElementNS("http://www.w3.org/2000/svg","rect");
+    hitRect.setAttribute("x", padL); hitRect.setAttribute("y", padT);
+    hitRect.setAttribute("width", plotW); hitRect.setAttribute("height", plotH);
+    hitRect.setAttribute("fill", "transparent"); hitRect.style.cursor = "crosshair";
+    svgEl.appendChild(hitRect);
+
+    var ch = svgEl.querySelector("#" + svgEl.id + "-ch");
+    var dot = svgEl.querySelector("#" + svgEl.id + "-dot");
+
+    function showAt(i) {
+      var x = xOf(i), y = yOf(vals[i]);
+      ch.setAttribute("x1", x); ch.setAttribute("x2", x); ch.style.display = "";
+      dot.setAttribute("cx", x); dot.setAttribute("cy", y); dot.style.display = "";
+      var d = trendData[i];
+      var dateStr = new Date(d.date + "T00:00:00Z").toLocaleDateString("en-GB", {day:"numeric",month:"short",timeZone:"UTC"});
+      tooltipEl.innerHTML = "<span style='font-weight:700'>£" + Math.round(d.value).toLocaleString("en-GB") + "</span><br><span style='opacity:.72;font-size:10.5px'>Week ending " + dateStr + "</span>";
+      var svgRect = svgEl.getBoundingClientRect();
+      var scaleX = svgRect.width / W;
+      tooltipEl.style.left = (svgRect.left + x * scaleX) + "px";
+      tooltipEl.style.top = (svgRect.top + y * (svgRect.height/H) + window.scrollY - 8) + "px";
+      tooltipEl.style.opacity = "1";
+    }
+    function hide() {
+      ch.style.display = "none"; dot.style.display = "none"; tooltipEl.style.opacity = "0";
+    }
+
+    hitRect.addEventListener("pointermove", function(e) {
+      var rect = svgEl.getBoundingClientRect();
+      var frac = ((e.clientX - rect.left) / rect.width * W - padL) / plotW;
+      var i = Math.max(0, Math.min(vals.length-1, Math.round(frac * (vals.length-1))));
+      showAt(i);
+    });
+    hitRect.addEventListener("pointerleave", hide);
+  }
+
   function renderTiles() {
     var tilesEl = document.getElementById("tiles");
     tilesEl.innerHTML = "";
@@ -758,6 +854,7 @@
       tile.className = "tile";
       tile.style.setProperty("--tile-color", g.color);
       tile.setAttribute("aria-expanded", "false");
+      var svgId = "mini-" + name.replace(/\s+/g,"");
       tile.innerHTML =
         '<div class="tile-head">' +
           '<span class="tile-swatch"></span><span class="tile-name"></span>' +
@@ -765,6 +862,7 @@
         '</div>' +
         '<div class="tile-value"></div>' +
         '<div class="tile-meta"></div>' +
+        '<svg class="tile-mini-chart" id="' + svgId + '" role="img" aria-label="Weekly trend for ' + name + '"></svg>' +
         '<div class="tile-bar-track"><div class="tile-bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>';
       tile.querySelector(".tile-name").textContent = name;
       tile.querySelector(".tile-value").textContent = fmtGBP(g.value);
@@ -772,6 +870,12 @@
       tile.addEventListener("click", function () { toggleGroup(name, tile); });
       tilesEl.appendChild(tile);
       g._tileEl = tile;
+      // Render mini trend chart for this group
+      var miniSvg = document.getElementById(svgId);
+      var miniTip = document.getElementById("miniTooltip");
+      if (miniSvg && GROUP_TRENDS[name]) {
+        renderMiniChart(miniSvg, miniTip, GROUP_TRENDS[name], g.colorHex);
+      }
     });
     // restore open state (default Commercial on first render)
     var toOpen = openGroup || "Commercial";
@@ -810,6 +914,7 @@
         var pid = String(r.product_id || r[0]);
         var qty = parseFloat(r.qty || r[1]) || 0;
         qtyMap[pid] = (qtyMap[pid] || 0) + qty;
+        if (r.obsolete) OBSOLETE_PIDS.add(pid);
       });
       var computed = computeFromQtyMap(qtyMap);
       if (!(computed.grand > 0) || computed.matched < 50) {
