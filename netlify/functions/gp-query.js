@@ -106,7 +106,7 @@ exports.handler = async function(event) {
     const partnerPlMap = {};
     partners.forEach(p => {
       const pl = Array.isArray(p.property_product_pricelist)
-        ? p.property_product_pricelist[1] : (p.property_product_pricelist || '—');
+        ? p.property_product_pricelist[1] : (p.property_product_pricelist && p.property_product_pricelist !== false ? String(p.property_product_pricelist) : '—');
       partnerPlMap[p.id] = pl || '—';
     });
 
@@ -119,7 +119,7 @@ exports.handler = async function(event) {
         partner:       Array.isArray(o.partner_id)  ? o.partner_id[1]  : '',
         salesperson:   Array.isArray(o.user_id)     ? o.user_id[1]     : '',
         created_by:    Array.isArray(o.create_uid)  ? o.create_uid[1]  : '',
-        orderPl:       Array.isArray(o.pricelist_id)? o.pricelist_id[1]: '—',
+        orderPl:       Array.isArray(o.pricelist_id) && o.pricelist_id.length > 1 ? String(o.pricelist_id[1]) : (o.pricelist_id && o.pricelist_id !== false ? String(o.pricelist_id) : '—'),
         customerPl:    partnerPlMap[pid] || '—',
       };
     });
