@@ -71,24 +71,38 @@ async function odooCall(uid, model, method, args, kwargs) {
 }
 
 
+const OBSOLETE_TAG_ID = 12; // Odoo product.tag id for "Obsolete"
+
 exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
   try {
     const uid = await getUid();
     const LOC_IDS = [8,11,23,24,25,26,27,28,29,30,31,32,33,34,35,36];
 
-    const quants = await odooCall(uid, 'stock.quant', 'search_read',
-      [[['location_id','in',LOC_IDS],['quantity','>',0]]],
-      { fields: ['product_id','quantity'], limit: 5000 });
+    // Fetch stock quants and obsolete product variants in parallel
+    const [quants, obsoleteTemplates] = await Promise.all([
+      odooCall(uid, 'stock.quant', 'search_read',
+        [[['location_id','in',LOC_IDS],['quantity','>',0]]],
+        { fields: ['product_id','quantity'], limit: 5000 }),
+      // Get product.product IDs for templates tagged Obsolete
+      odooCall(uid, 'product.product', 'search_read',
+        [[['product_tmpl_id.product_tag_ids','in',[OBSOLETE_TAG_ID]],['active','=',true]]],
+        { fields: ['id'], limit: 2000 }),
+    ]);
 
-    // Aggregate by product_id
+    const obsoleteIds = new Set(obsoleteTemplates.map(p => p.id));
+
+    // Aggregate by product_id, flagging obsolete
     const map = {};
     quants.forEach(q => {
       const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
-      map[pid] = (map[pid]||0) + (q.quantity||0);
+      if (!map[pid]) map[pid] = { qty: 0, obsolete: obsoleteIds.has(pid) };
+      map[pid].qty += (q.quantity||0);
     });
 
-    const rows = Object.entries(map).map(([pid, qty]) => ({ product_id: Number(pid), qty }));
+    const rows = Object.entries(map).map(([pid, d]) => ({
+      product_id: Number(pid), qty: d.qty, obsolete: d.obsolete
+    }));
 
     return {
       statusCode: 200,
