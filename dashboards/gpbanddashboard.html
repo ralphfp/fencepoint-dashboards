@@ -267,8 +267,8 @@
       // Map API response to row format:
       // [0]id [1]name [2]customer [3]created_by [4]salesperson [5]customerPl [6]orderPl [7]rev [8]margin [9]pct
       allRows = apiRows.map(r => [
-        r.id, r.name, r.partner, r.created_by, r.salesperson,
-        r.customerPl, r.orderPl, r.rev, r.margin, r.pct
+        r.id, r.name || '', r.partner || '', r.created_by || '', r.salesperson || '',
+        r.customerPl || '—', r.orderPl || '—', r.rev || 0, r.margin || 0, r.pct || 0
       ]);
 
       setKPIs(allRows);
