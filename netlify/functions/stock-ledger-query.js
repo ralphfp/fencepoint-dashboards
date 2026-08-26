@@ -79,18 +79,27 @@ exports.handler = async function(event) {
     const uid = await getUid();
     const LOC_IDS = [8,11,23,24,25,26,27,28,29,30,31,32,33,34,35,36];
 
-    // Fetch stock quants and obsolete product variants in parallel
-    const [quants, obsoleteTemplates] = await Promise.all([
+    // Fetch stock quants and obsolete templates in parallel
+    // Note: dotted relational paths don't work in XML-RPC so we fetch templates first
+    const [quants, obsoleteTemplateRecs] = await Promise.all([
       odooCall(uid, 'stock.quant', 'search_read',
         [[['location_id','in',LOC_IDS],['quantity','>',0]]],
         { fields: ['product_id','quantity'], limit: 5000 }),
-      // Get product.product IDs for templates tagged Obsolete
-      odooCall(uid, 'product.product', 'search_read',
-        [[['product_tmpl_id.product_tag_ids','in',[OBSOLETE_TAG_ID]],['active','=',true]]],
+      // Step 1: get product.template IDs tagged Obsolete (direct many2many — works in XML-RPC)
+      odooCall(uid, 'product.template', 'search_read',
+        [[['product_tag_ids','in',[OBSOLETE_TAG_ID]],['active','=',true]]],
         { fields: ['id'], limit: 2000 }),
     ]);
 
-    const obsoleteIds = new Set(obsoleteTemplates.map(p => p.id));
+    // Step 2: get product.product variant IDs for those templates
+    const obsoleteTmplIds = obsoleteTemplateRecs.map(t => t.id);
+    let obsoleteIds = new Set();
+    if (obsoleteTmplIds.length > 0) {
+      const obsoleteVariants = await odooCall(uid, 'product.product', 'search_read',
+        [[['product_tmpl_id','in',obsoleteTmplIds],['active','=',true]]],
+        { fields: ['id'], limit: 2000 });
+      obsoleteIds = new Set(obsoleteVariants.map(p => p.id));
+    }
 
     // Aggregate by product_id, flagging obsolete
     const map = {};
