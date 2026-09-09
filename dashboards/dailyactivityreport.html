@@ -383,6 +383,7 @@ function activityLogHtml() {
   const totalConnected = filteredRows.filter(r => !r.noAnswer).length;
   const totalNoAnswer  = filteredRows.filter(r =>  r.noAnswer).length;
   const totalInbound   = filteredRows.filter(r => r.activityDisplay === "Inbound Call").length;
+  const connectedExclInbound = filteredRows.filter(r => !r.noAnswer && r.activityDisplay !== "Inbound Call").length;
   const connectRate    = totalCalls > 0 ? Math.round((totalConnected/totalCalls)*100) : 0;
   const activityTypes  = [...new Set(filteredRows.map(r => r.activityDisplay))].length;
   let displayDate = state.dateFrom === state.dateTo
@@ -422,7 +423,7 @@ function activityLogHtml() {
       <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;">${bizCardHtml("Quotes Generated",state.processed.quotes,"#533FB7")}${bizCardHtml("Sales Orders Confirmed",state.processed.confirmed,"#1D9E75")}${bizCardHtml("New Opportunities",state.processed.opportunities,"#BA7517")}</div>
       <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">${filterBtns}</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;">${repChips}</div>
-      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">${metricCardHtml("Total Activities",totalCalls,"#43474F")}${metricCardHtml("Connected",totalConnected,"#1a7a4a")}${metricCardHtml("Inbound Calls",totalInbound,"#BA7517")}${metricCardHtml("No Answer",totalNoAnswer,"#c0392b")}${metricCardHtml("Activity Types",activityTypes,"#533FB7")}</div>
+      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">${metricCardHtml("Total Activities",totalCalls,"#43474F")}${metricCardHtml("Connected",connectedExclInbound,"#1a7a4a")}${metricCardHtml("Inbound Calls",totalInbound,"#BA7517")}${metricCardHtml("No Answer",totalNoAnswer,"#c0392b")}${metricCardHtml("Activity Types",activityTypes,"#533FB7")}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">${activityTableHtml(filteredRows)}${connectRateHtml(filteredRows)}</div>
       <div style="margin-bottom:16px;">${barChartHtml(filteredRows)}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;"><div style="background:#fff;border-radius:12px;padding:24px;border:1.5px solid #f0f0f0;text-align:center;"><div style="font-size:13px;font-weight:700;color:#333;margin-bottom:16px;">Overall Connect Rate</div><div style="font-size:56px;font-weight:900;color:${connectRate>=50?'#F37032':'#E24B4A'};line-height:1;">${connectRate}%</div><div style="font-size:12px;color:#888;margin-top:8px;margin-bottom:16px;">${totalConnected} connected of ${totalCalls} total</div><div style="height:12px;background:#f3f4f6;border-radius:6px;overflow:hidden;"><div style="height:100%;width:${connectRate}%;background:#F37032;border-radius:6px;"></div></div><div style="display:flex;justify-content:space-between;font-size:10px;color:#999;margin-top:4px;"><span>No Answer ${100-connectRate}%</span><span>Connected ${connectRate}%</span></div></div>${repComparisonHtml()}</div>
