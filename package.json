@@ -1,0 +1,7 @@
+{
+  "name": "fencepoint-dashboards",
+  "private": true,
+  "dependencies": {
+    "@netlify/blobs": "latest"
+  }
+}
