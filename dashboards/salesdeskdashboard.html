@@ -418,7 +418,7 @@ body {
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);white-space:nowrap;">Prospecting</div>
         <div id="prospecting-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;"></div>
-        <button id="prospecting-card" onclick="applyProspecting()" style="padding:6px 14px;border-radius:7px;border:none;background:#F37032;color:#fff;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;">Apply</button>
+        <button id="prospecting-card" id="prospecting-apply-btn" onclick="applyProspecting()" style="padding:6px 14px;border-radius:7px;border:none;background:#F37032;color:#fff;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;">Apply</button>
       </div>
 
     </div>
@@ -684,31 +684,8 @@ function renderActivity(proc) {
 
 
 // ── Prospecting ──────────────────────────────────────────────────────────────
-// Shared across everyone via /.netlify/functions/prospecting-store (Netlify Blobs).
 var prospectingState = {};
-var prospectingDirty = {}; // rows edited locally since the last successful Apply — protected from being overwritten by incoming refreshes
 PROSPECTING_REPS.forEach(function(rep) { prospectingState[rep] = {total:0, connected:0}; });
-
-async function fetchProspecting(dateStr) {
-  try {
-    var res = await fetch("/.netlify/functions/prospecting-store?date=" + encodeURIComponent(dateStr));
-    if (!res.ok) return {};
-    return await res.json();
-  } catch (err) {
-    console.error("prospecting load failed", err);
-    return {};
-  }
-}
-
-function mergeProspecting(serverData) {
-  PROSPECTING_REPS.forEach(function(rep) {
-    if (prospectingDirty[rep]) return; // don't clobber an unsaved local edit
-    var server = serverData[rep];
-    prospectingState[rep] = server
-      ? { total: parseInt(server.total, 10) || 0, connected: parseInt(server.connected, 10) || 0 }
-      : (prospectingState[rep] || {total:0, connected:0});
-  });
-}
 
 function renderProspectingGrid() {
   var grid = document.getElementById("prospecting-grid");
@@ -737,41 +714,22 @@ function updateProspecting(input) {
   var field = input.dataset.field;
   if (!prospectingState[rep]) prospectingState[rep] = {total:0, connected:0};
   prospectingState[rep][field] = parseInt(input.value) || 0;
-  prospectingDirty[rep] = true;
   var vals = prospectingState[rep];
   var rate = vals.total > 0 ? Math.round(vals.connected / vals.total * 100) : 0;
   var rateEl = document.getElementById("prosp-rate-" + rep.replace(/ /g,"-"));
   if (rateEl) { rateEl.textContent = rate + "% connect"; rateEl.style.color = rate > 0 ? "#16a34a" : "var(--muted)"; }
 }
 
-async function applyProspecting() {
-  var btn = document.querySelector("#prospecting-card button");
-  var dirtyReps = PROSPECTING_REPS.filter(function(rep) { return prospectingDirty[rep]; });
-  if (dirtyReps.length === 0) {
-    if (btn) { btn.textContent = "Saved ✓"; btn.style.background = "#16a34a"; setTimeout(function(){ btn.textContent = "Apply"; btn.style.background = "#F37032"; }, 1200); }
-    return;
-  }
-  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
-  try {
-    var dateStr = getToday();
-    await Promise.all(dirtyReps.map(function(rep) {
-      var vals = prospectingState[rep] || {total:0, connected:0};
-      return fetch("/.netlify/functions/prospecting-store?date=" + encodeURIComponent(dateStr), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rep: rep, total: vals.total, connected: vals.connected })
-      }).then(function(r) { if (!r.ok) throw new Error("save failed for " + rep); return r.json(); });
-    }));
-    dirtyReps.forEach(function(rep) { delete prospectingDirty[rep]; });
-    if (btn) { btn.textContent = "Saved ✓"; btn.style.background = "#16a34a"; }
-  } catch (err) {
-    console.error("prospecting save failed", err);
-    if (btn) { btn.textContent = "Error"; btn.style.background = "#c0392b"; }
-  } finally {
-    if (btn) {
-      setTimeout(function(){ btn.disabled = false; btn.textContent = "Apply"; btn.style.background = "#F37032"; }, 1500);
-    }
-  }
+function applyProspecting() {
+  // Re-read all input values into state before rendering
+  document.querySelectorAll("[data-rep][data-field]").forEach(function(inp) {
+    var rep = inp.dataset.rep, field = inp.dataset.field;
+    if (!prospectingState[rep]) prospectingState[rep] = {total:0, connected:0};
+    prospectingState[rep][field] = parseInt(inp.value) || 0;
+  });
+  renderProspectingGrid();
+  var btn = document.getElementById("prospecting-apply-btn");
+  if (btn) { btn.textContent = "Saved ✓"; btn.style.background = "#16a34a"; setTimeout(function(){ btn.textContent = "Apply"; btn.style.background = "#F37032"; }, 1500); }
 }
 
 async function load() {
@@ -793,12 +751,6 @@ async function load() {
 
   initDials();
   renderProspectingGrid();
-
-  // Pull the shared Prospecting numbers (everyone reads/writes the same store) — fire alongside the sales query
-  var prospectingPromise = fetchProspecting(today).then(function(serverData) {
-    mergeProspecting(serverData);
-    renderProspectingGrid();
-  });
 
   var status = document.getElementById("status-bar");
   status.className = "status-bar";
