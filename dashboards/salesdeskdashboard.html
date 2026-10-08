@@ -663,16 +663,20 @@ function renderActivity(proc) {
   grid.innerHTML = REPS.map(function(rep) {
     var d   = proc.repData[rep];
     var cfg = REP_CONFIG[rep];
-    var rate = d.totalCalls > 0 ? Math.round(d.totalConnected/d.totalCalls*100) : 0;
+    var pCalls = d.prospectCalls || 0;
+    var pConn  = d.prospectConnected || 0;
+    var allCalls = d.totalCalls + pCalls;
+    var allConn  = d.totalConnected + pConn;
+    var rate = allCalls > 0 ? Math.round(allConn/allCalls*100) : 0;
     var rateClass = rate > 0 ? "good" : "zero";
-    var connHtml = '<span style="color:#16a34a;font-weight:700;">' + d.totalConnected + '&#10003;</span>';
-    var naHtml   = '<span style="color:#dc2626;font-weight:700;">' + d.totalNoAnswer + '&#10007;</span>';
+    var connHtml = '<span style="color:#16a34a;font-weight:700;">' + allConn + '&#10003;</span>';
+    var naHtml   = '<span style="color:#dc2626;font-weight:700;">' + (d.totalNoAnswer + (pCalls - pConn)) + '&#10007;</span>';
     return '<div class="rep-card">' +
       '<div class="rep-top">' +
         '<div class="avatar" style="background:' + cfg.bg + ';color:' + cfg.color + ';">' + cfg.initials + '</div>' +
         '<div>' +
           '<div class="rep-name">' + rep.split(" ")[0] + ' ' + rep.split(" ")[1] + '</div>' +
-          '<div class="rep-calls">' + d.totalCalls + ' calls &nbsp;&middot;&nbsp; ' + connHtml + ' / ' + naHtml + '</div>' +
+          '<div class="rep-calls">' + allCalls + ' calls &nbsp;&middot;&nbsp; ' + connHtml + ' / ' + naHtml + '</div>' +
         '</div>' +
       '</div>' +
       '<div class="rep-connect-rate ' + rateClass + '">' + rate + '% connect</div>' +
@@ -685,6 +689,7 @@ function renderActivity(proc) {
 
 // ── Prospecting ──────────────────────────────────────────────────────────────
 var prospectingState = {};
+var lastProc = null;
 PROSPECTING_REPS.forEach(function(rep) { prospectingState[rep] = {total:0, connected:0}; });
 
 function renderProspectingGrid() {
@@ -721,12 +726,24 @@ function updateProspecting(input) {
 }
 
 function applyProspecting() {
-  // Re-read all input values into state before rendering
+  // Re-read all input values into state
   document.querySelectorAll("[data-rep][data-field]").forEach(function(inp) {
     var rep = inp.dataset.rep, field = inp.dataset.field;
     if (!prospectingState[rep]) prospectingState[rep] = {total:0, connected:0};
     prospectingState[rep][field] = parseInt(inp.value) || 0;
   });
+
+  // Merge prospecting totals into rep card data and re-render
+  if (lastProc) {
+    PROSPECTING_REPS.forEach(function(rep) {
+      var ps = prospectingState[rep] || {total:0, connected:0};
+      if (!lastProc.repData[rep]) return;
+      lastProc.repData[rep].prospectCalls     = ps.total;
+      lastProc.repData[rep].prospectConnected = ps.connected;
+    });
+    renderActivity(lastProc);
+  }
+
   renderProspectingGrid();
   var btn = document.getElementById("prospecting-apply-btn");
   if (btn) { btn.textContent = "Saved ✓"; btn.style.background = "#16a34a"; setTimeout(function(){ btn.textContent = "Apply"; btn.style.background = "#F37032"; }, 1500); }
@@ -809,6 +826,7 @@ async function load() {
 
     // ── Activity ──
     var proc = processActivity(actData);
+    lastProc = proc;
     renderActivity(proc);
 
 
