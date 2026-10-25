@@ -283,19 +283,50 @@ function getPrinted() { try { return JSON.parse(localStorage.getItem(PRINT_KEY)|
 function markPrinted(orderId) { var p=getPrinted(); p[orderId]=true; try{localStorage.setItem(PRINT_KEY,JSON.stringify(p));}catch(e){} }
 function isPrinted(orderId) { return !!getPrinted()[orderId]; }
 
-var NOTES_KEY = 'fp_dispatch_notes';
-function getNotes() { try { return JSON.parse(localStorage.getItem(NOTES_KEY)||'{}'); } catch(e){return{};} }
-function saveNote(orderId, text) { var n=getNotes(); n[orderId]=text; try{localStorage.setItem(NOTES_KEY,JSON.stringify(n));}catch(e){} }
-function getNote(orderId) { return getNotes()[orderId] || ''; }
+// Notes stored in Odoo SO chatter — shared across all users/devices
+var NOTE_API = '/.netlify/functions/dispatch-note';
+var noteCache = {}; // orderId -> note text (loaded on card expand)
 
-function saveFreeNote(orderId) {
-  var ta = document.getElementById('note-ta-'+orderId);
+async function loadNote(orderId) {
+  if (noteCache[orderId] !== undefined) return noteCache[orderId];
+  try {
+    var resp = await fetch(NOTE_API, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ action: 'read', orderId: orderId })
+    });
+    var data = await resp.json();
+    noteCache[orderId] = data.note || '';
+    return noteCache[orderId];
+  } catch(e) { return ''; }
+}
+
+async function saveFreeNote(orderId) {
+  var ta  = document.getElementById('note-ta-'+orderId);
   var btn = document.getElementById('note-btn-'+orderId);
   if (!ta || !btn) return;
-  saveNote(orderId, ta.value);
-  btn.textContent = '✓ Saved';
-  btn.classList.add('saved');
-  setTimeout(function(){ btn.textContent = 'Save Note'; btn.classList.remove('saved'); }, 1500);
+  var text = ta.value.trim();
+  if (!text) return;
+  btn.textContent = 'Saving…';
+  btn.disabled = true;
+  try {
+    var resp = await fetch(NOTE_API, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ action: 'write', orderId: orderId, note: text })
+    });
+    var data = await resp.json();
+    if (data.success) {
+      noteCache[orderId] = text;
+      btn.textContent = '✓ Saved to Odoo';
+      btn.classList.add('saved');
+      setTimeout(function(){ btn.textContent = 'Save Note'; btn.classList.remove('saved'); btn.disabled = false; }, 2000);
+    } else {
+      throw new Error(data.error || 'Save failed');
+    }
+  } catch(e) {
+    btn.textContent = '⚠ Error';
+    btn.disabled = false;
+    setTimeout(function(){ btn.textContent = 'Save Note'; }, 2000);
+  }
 }
 
 function pad(n) { return String(n).padStart(2,'0'); }
@@ -389,10 +420,10 @@ function buildOrderCard(o, today) {
       items + '</div>';
   }
 
-  // Free text note
-  var savedNote = getNote(o.id);
-  var freeNoteHtml = '<div class="free-note-label">Dispatcher Notes</div>' +
-    '<textarea class="free-note-area" id="note-ta-' + o.id + '" placeholder="Add a note for this order…" onclick="event.stopPropagation()">' + savedNote.replace(/</g,'&lt;') + '</textarea><br>' +
+  // Free text note — loaded from Odoo async when card expands
+  var cachedNote = noteCache[o.id] || '';
+  var freeNoteHtml = '<div class="free-note-label">Additional Notes <span style="font-size:10px;font-weight:400;color:var(--slate-lt)">(shared · saved to Odoo)</span></div>' +
+    '<textarea class="free-note-area" id="note-ta-' + o.id + '" placeholder="Loading…" onclick="event.stopPropagation()">' + cachedNote.replace(/</g,'&lt;') + '</textarea><br>' +
     '<button class="free-note-save" id="note-btn-' + o.id + '" onclick="event.stopPropagation();saveFreeNote(' + o.id + ')">Save Note</button>';
 
   // Picking sheet section
@@ -447,6 +478,15 @@ function toggleCard(id) {
   if (!lines) return;
   var open = lines.classList.toggle('open');
   if (chev) chev.style.transform = open ? 'rotate(180deg)' : '';
+  // Load note from Odoo when card opens
+  if (open) {
+    var ta = document.getElementById('note-ta-'+id);
+    if (ta && ta.placeholder === 'Loading…') {
+      loadNote(id).then(function(note) {
+        if (ta) { ta.value = note; ta.placeholder = 'Add a note for this order…'; }
+      });
+    }
+  }
 }
 
 // ── Reset print lock for an order (admin use) ──
