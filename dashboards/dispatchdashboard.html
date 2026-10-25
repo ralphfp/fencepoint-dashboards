@@ -330,9 +330,7 @@ function buildOrderCard(o, today) {
     var qohHtml = '';
     if (l.dropship) {
       qohHtml = '<span class="qoh-badge" style="background:#f5f5f5;color:#888">—</span>';
-    } else if (qoh === null || qoh === undefined) {
-      qohHtml = '<span class="qoh-badge qoh-zero">?</span>';
-    } else if (qoh === 0) {
+    } else if (qoh === null || qoh === undefined || qoh === 0) {
       qohHtml = '<span class="qoh-badge qoh-zero">0</span>';
     } else if (qoh < l.qty) {
       qohHtml = '<span class="qoh-badge qoh-low">' + Math.round(qoh) + '</span>';
@@ -517,8 +515,8 @@ function calGoToday() { var n=new Date(); calYear=n.getFullYear(); calMonth=n.ge
 // ── View switch ──
 function setView(v) {
   currentView = v;
-  document.getElementById('list-view').style.display = v==='list'?'':'none';
-  document.getElementById('calendar-view').style.display = v==='calendar'?'':'none';
+  document.getElementById('list-view').style.display = v==='list'?'block':'none';
+  document.getElementById('calendar-view').style.display = v==='calendar'?'block':'none';
   document.getElementById('btn-list').classList.toggle('active', v==='list');
   document.getElementById('btn-cal').classList.toggle('active', v==='calendar');
   if (v==='calendar') renderCalendar(getFiltered());
