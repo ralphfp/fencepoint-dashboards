@@ -131,18 +131,24 @@ exports.handler = async function(event) {
         { fields: ['sale_id','name','scheduled_date','picking_type_code',
                    'carrier_id','x_studio_transport_company','note'], limit: 2000 }),
 
-      // Stock on hand for all locations
-      odooCall(uid, 'stock.quant', 'search_read',
-        [[['location_id','in',LOC_IDS],['quantity','>',0]]],
-        { fields: ['product_id','quantity'], limit: 5000 }),
+      // Stock on hand — fetched after we know product IDs, so done separately below
+      Promise.resolve([]),  // placeholder, stock fetched after lines
     ]);
 
-    // Qty on hand map by product_id
+    // Group lines to get product IDs first
+    const productIds = [...new Set(lines.map(l => Array.isArray(l.product_id)?l.product_id[0]:l.product_id).filter(Boolean))];
+
+    // Targeted stock quant fetch — only products on these orders
     const qohMap = {};
-    stockQuants.forEach(q => {
-      const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
-      qohMap[pid] = (qohMap[pid]||0) + (q.quantity||0);
-    });
+    if (productIds.length > 0) {
+      const stockQuants = await odooCall(uid, 'stock.quant', 'search_read',
+        [[['location_id','in',LOC_IDS],['product_id','in',productIds]]],
+        { fields: ['product_id','quantity'], limit: 5000 });
+      stockQuants.forEach(q => {
+        const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
+        qohMap[pid] = (qohMap[pid]||0) + (q.quantity||0);
+      });
+    }
 
     // Picking maps
     const pickMap = {};   // sale_id -> PICK scheduled_date
@@ -173,7 +179,6 @@ exports.handler = async function(event) {
     // Lines — detect dropship (route_id = 9) and non-stock (x_studio_stocked_item=false handled later)
     // Group by order, flag each line
     const linesByOrder = {};
-    const productIds = [...new Set(lines.map(l => Array.isArray(l.product_id)?l.product_id[0]:l.product_id).filter(Boolean))];
 
     lines.forEach(l => {
       const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
@@ -192,15 +197,28 @@ exports.handler = async function(event) {
       });
     });
 
-    // Check non-stock via product template (x_studio_stocked_item = false)
+    // Check non-stock: get template IDs for our product variants, then check x_studio_stocked_item
+    // Two-step to avoid dotted path in XML-RPC domain
     let nonStockPids = new Set();
     if (productIds.length > 0) {
-      const prodRecs = await odooCall(uid, 'product.product', 'search_read',
-        [[['id','in',productIds],['product_tmpl_id.x_studio_stocked_item','=',false]]],
-        { fields: ['id'], limit: 2000 });
-      // Note: dotted path may not work — fallback: just use qoh=0 as indicator
-      // Use route=9 (dropship) as primary signal; non-stock = qoh is null/0 and not dropship
-      prodRecs.forEach(p => nonStockPids.add(p.id));
+      const variantRecs = await odooCall(uid, 'product.product', 'search_read',
+        [[['id','in',productIds]]],
+        { fields: ['id','product_tmpl_id'], limit: 2000 });
+      const tmplIds = [...new Set(variantRecs.map(p => Array.isArray(p.product_tmpl_id)?p.product_tmpl_id[0]:p.product_tmpl_id))];
+      const tmplToVariants = {};
+      variantRecs.forEach(p => {
+        const tid = Array.isArray(p.product_tmpl_id)?p.product_tmpl_id[0]:p.product_tmpl_id;
+        if (!tmplToVariants[tid]) tmplToVariants[tid] = [];
+        tmplToVariants[tid].push(p.id);
+      });
+      if (tmplIds.length > 0) {
+        const nonStockTmpls = await odooCall(uid, 'product.template', 'search_read',
+          [[['id','in',tmplIds],['x_studio_stocked_item','=',false]]],
+          { fields: ['id'], limit: 2000 });
+        nonStockTmpls.forEach(t => {
+          (tmplToVariants[t.id]||[]).forEach(pid => nonStockPids.add(pid));
+        });
+      }
     }
 
     // Mark non-stock on lines
