@@ -182,9 +182,11 @@ exports.handler = async function(event) {
     const poIds = linkedPOs.map(p => p.id);
     let poLines = [];
     if (poIds.length > 0) {
-      poLines = await odooCall(uid, 'purchase.order.line', 'search_read',
-        [[['order_id','in',poIds],['qty_received','<','product_qty']]],
+      const allPoLines = await odooCall(uid, 'purchase.order.line', 'search_read',
+        [[['order_id','in',poIds]]],
         { fields: ['order_id','product_id','product_qty','qty_received','date_planned'], limit: 2000 });
+      // Filter in JS — can't compare two fields in XML-RPC domain
+      poLines = allPoLines.filter(l => (l.product_qty||0) > (l.qty_received||0));
     }
 
     // Build PO note map: SO name -> [{poName, supplier, product, qty, datePlanned}]
