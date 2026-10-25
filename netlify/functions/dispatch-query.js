@@ -84,7 +84,7 @@ async function odooSearchAll(uid, model, domain, fields, pageSize=500) {
 exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
   try {
-    const { today } = JSON.parse(event.body);
+    const { today } = JSON.parse(event.body || '{"today":"2026-01-01"}');
     const uid = await getUid();
 
     const LOC_IDS = [8,11,23,24,25,26,27,28,29,30,31,32,33,34,35,36];
@@ -93,6 +93,7 @@ exports.handler = async function(event) {
     const orderFields = ['id','name','partner_id','commitment_date','delivery_status',
                          'user_id','client_order_ref','tag_ids','team_id'];
 
+    let step = 'orders';
     const [pendingOrders, startedOrders] = await Promise.all([
       odooCall(uid, 'sale.order', 'search_read',
         [[['state','=','sale'],['commitment_date','>=',today+' 00:00:00'],
@@ -117,6 +118,7 @@ exports.handler = async function(event) {
     const orderIds = orders.map(o => o.id);
 
     // All parallel fetches
+    step = 'lines+pickings';
     const [lines, pickings, stockQuants] = await Promise.all([
 
       // SO lines — include route_id for dropship detection
@@ -141,6 +143,7 @@ exports.handler = async function(event) {
     // Targeted stock quant fetch — only products on these orders
     const qohMap = {};
     if (productIds.length > 0) {
+      step = 'stock_quant';
       const stockQuants = await odooCall(uid, 'stock.quant', 'search_read',
         [[['location_id','in',LOC_IDS],['product_id','in',productIds]]],
         { fields: ['product_id','quantity'], limit: 5000 });
@@ -201,6 +204,7 @@ exports.handler = async function(event) {
     // Two-step to avoid dotted path in XML-RPC domain
     let nonStockPids = new Set();
     if (productIds.length > 0) {
+      step = 'non_stock_variants';
       const variantRecs = await odooCall(uid, 'product.product', 'search_read',
         [[['id','in',productIds]]],
         { fields: ['id','product_tmpl_id'], limit: 2000 });
@@ -255,7 +259,7 @@ exports.handler = async function(event) {
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: err.message })
+      body: JSON.stringify({ error: err.message, step: typeof step !== 'undefined' ? step : 'unknown', stack: err.stack ? err.stack.slice(0,500) : '' })
     };
   }
 };
