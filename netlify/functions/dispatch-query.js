@@ -123,11 +123,12 @@ exports.handler = async function(event) {
       body: JSON.stringify({ orders: [] })
     };
 
-    const orderIds = orders.map(o => o.id);
+    const orderIds   = orders.map(o => o.id);
+    const orderNames = orders.map(o => o.name);
 
     // All parallel fetches
     step = 'lines+pickings';
-    const [lines, pickings, stockQuants] = await Promise.all([
+    const [lines, pickings, poHeaders, stockQuants] = await Promise.all([
 
       // SO lines — include route_id for dropship detection
       odooCall(uid, 'sale.order.line', 'search_read',
@@ -141,8 +142,14 @@ exports.handler = async function(event) {
         { fields: ['sale_id','name','scheduled_date','picking_type_code',
                    'carrier_id','x_studio_transport_company','note'], limit: 2000 }),
 
-      // Stock on hand — fetched after we know product IDs, so done separately below
-      Promise.resolve([]),  // placeholder, stock fetched after lines
+      // Linked POs via origin field (back-to-back purchase orders)
+      odooCall(uid, 'purchase.order', 'search_read',
+        [[['state','in',['draft','sent','purchase','done']],
+          ['origin','in',orderNames]]],
+        { fields: ['id','name','origin','partner_id','date_planned'], limit: 500 }),
+
+      // Placeholder — stock fetched after lines
+      Promise.resolve([]),
     ]);
 
     // Group lines to get product IDs first
@@ -166,6 +173,42 @@ exports.handler = async function(event) {
     const delMap  = {};   // sale_id -> DEL scheduled_date
     const transportMap = {};
     const noteMap = {};
+
+    // Fetch PO lines for linked POs
+    const poIds = poHeaders.map(p => p.id);
+    let poLines = [];
+    if (poIds.length > 0) {
+      poLines = await odooCall(uid, 'purchase.order.line', 'search_read',
+        [[['order_id','in',poIds],['qty_received','<','product_qty']]],
+        { fields: ['order_id','product_id','product_qty','qty_received','date_planned'], limit: 2000 });
+    }
+
+    // Build PO note map: SO name -> [{poName, supplier, product, qty, datePlanned}]
+    const poNoteMap = {}; // keyed by SO name
+    const poInfoMap2 = {};
+    poHeaders.forEach(p => {
+      const sup = Array.isArray(p.partner_id) ? p.partner_id[1] : '';
+      poInfoMap2[p.id] = { name: p.name, supplier: sup, origin: p.origin };
+    });
+    poLines.forEach(l => {
+      const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
+      const info = poInfoMap2[oid];
+      if (!info) return;
+      const soName = info.origin;
+      if (!poNoteMap[soName]) poNoteMap[soName] = [];
+      const pid = Array.isArray(l.product_id) ? l.product_id[1] : '';
+      const due = l.date_planned ? l.date_planned.slice(0,10) : '';
+      const outstanding = (l.product_qty||0) - (l.qty_received||0);
+      if (outstanding > 0) {
+        poNoteMap[soName].push({
+          poName: info.name,
+          supplier: info.supplier,
+          product: pid,
+          qty: outstanding,
+          due,
+        });
+      }
+    });
 
     const pickIdMap = {};  // sale_id -> PICK picking id
     pickings.forEach(p => {
@@ -254,6 +297,7 @@ exports.handler = async function(event) {
       transport: transportMap[o.id] || '',
       note: noteMap[o.id] || '',
       pick_id: pickIdMap[o.id] || null,
+      poNotes: poNoteMap[o.name] || [],
       lines: linesByOrder[o.id] || [],
     }));
 
