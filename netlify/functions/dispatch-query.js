@@ -18,7 +18,7 @@ function toXml(val) {
   if (typeof val === 'number') return Number.isInteger(val) ? `<int>${val}</int>` : `<double>${val}</double>`;
   if (typeof val === 'string') return `<string>${val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</string>`;
   if (Array.isArray(val)) return `<array><data>${val.map(v => `<value>${toXml(v)}</value>`).join('')}</data></array>`;
-  if (typeof val === 'object') return `<struct>${Object.entries(val).map(([k,v]) => `<member><name>${k}</name><value>${toXml(v)}</value></member>`).join('')}</struct>`;
+  if (typeof val === 'object') return `<struct>${Object.entries(val).map(([k,v]) => `<member><n>${k}</n><value>${toXml(v)}</value></member>`).join('')}</struct>`;
   return `<string>${val}</string>`;
 }
 
@@ -45,7 +45,7 @@ function extractArrayData(xml) {
   const itemRegex=/<struct>([\s\S]*?)<\/struct>/g; let itemMatch;
   while((itemMatch=itemRegex.exec(xml))!==null) {
     const struct={};
-    const memberRegex=/<member>\s*<name>(.*?)<\/name>\s*<value>([\s\S]*?)<\/value>\s*<\/member>/g; let m;
+    const memberRegex=/<member>\s*<n>(.*?)<\/name>\s*<value>([\s\S]*?)<\/value>\s*<\/member>/g; let m;
     while((m=memberRegex.exec(itemMatch[1]))!==null) struct[m[1]]=extractVal(m[2].trim());
     results.push(struct);
   }
@@ -64,10 +64,21 @@ async function odooCall(uid, model, method, args, kwargs) {
   const xml = await xmlrpc(process.env.ODOO_URL+'/xmlrpc/2/object','execute_kw',
     [process.env.ODOO_DB, uid, process.env.ODOO_API_KEY, model, method, args, kwargs||{}]);
   if (xml.includes('<fault>')) {
-    const msg = xml.match(/<name>faultString<\/name>\s*<value><string>([\s\S]*?)<\/string>/);
+    const msg = xml.match(/<n>faultString<\/name>\s*<value><string>([\s\S]*?)<\/string>/);
     throw new Error(msg ? msg[1].slice(0,300) : 'XML-RPC fault');
   }
   return extractArrayData(xml);
+}
+
+async function odooSearchAll(uid, model, domain, fields, pageSize=500) {
+  let all=[], offset=0;
+  while(true) {
+    const batch = await odooCall(uid, model, 'search_read', [domain], {fields, limit:pageSize, offset});
+    all = all.concat(batch);
+    if (batch.length < pageSize) break;
+    offset += pageSize;
+  }
+  return all;
 }
 
 exports.handler = async function(event) {
@@ -76,103 +87,126 @@ exports.handler = async function(event) {
     const { today } = JSON.parse(event.body);
     const uid = await getUid();
 
-    // Fetch in two passes:
-    // 1. Pending orders with commitment_date from today onwards
-    // 2. ALL part-shipped (started) orders regardless of commitment_date
+    const LOC_IDS = [8,11,23,24,25,26,27,28,29,30,31,32,33,34,35,36];
+
+    // Fetch pending (from today) + all part-shipped — both Commercial AND Timber teams
+    const orderFields = ['id','name','partner_id','commitment_date','delivery_status',
+                         'user_id','client_order_ref','tag_ids','team_id'];
+
     const [pendingOrders, startedOrders] = await Promise.all([
       odooCall(uid, 'sale.order', 'search_read',
-        [[
-          ['state', '=', 'sale'],
-          ['commitment_date', '>=', today + ' 00:00:00'],
-          ['delivery_status', '=', 'pending'],
-          ['tag_ids', 'in', [20]],
-        ]],
-        {
-          fields: ['id','name','partner_id','commitment_date','delivery_status',
-                   'user_id','amount_untaxed','margin','client_order_ref','tag_ids'],
-          order: 'commitment_date asc',
-          limit: 500
-        }
-      ),
+        [[['state','=','sale'],['commitment_date','>=',today+' 00:00:00'],
+          ['delivery_status','=','pending']]],
+        { fields: orderFields, order: 'commitment_date asc', limit: 500 }),
       odooCall(uid, 'sale.order', 'search_read',
-        [[
-          ['state', '=', 'sale'],
-          ['delivery_status', '=', 'started'],
-          ['tag_ids', 'in', [20]],
-        ]],
-        {
-          fields: ['id','name','partner_id','commitment_date','delivery_status',
-                   'user_id','amount_untaxed','margin','client_order_ref','tag_ids'],
-          order: 'commitment_date asc',
-          limit: 500
-        }
-      ),
+        [[['state','=','sale'],['delivery_status','=','started']]],
+        { fields: orderFields, order: 'commitment_date asc', limit: 500 }),
     ]);
 
-    // Merge — started orders first (already in progress), then pending by date
-    // Deduplicate in case a started order also has commitment_date >= today
     const seenIds = new Set();
     const orders = [];
     [...startedOrders, ...pendingOrders].forEach(o => {
       if (!seenIds.has(o.id)) { seenIds.add(o.id); orders.push(o); }
     });
 
-    if (!orders.length) {
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orders: [] })
-      };
-    }
+    if (!orders.length) return {
+      statusCode: 200, headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ orders: [] })
+    };
 
     const orderIds = orders.map(o => o.id);
 
-    // Get order lines and delivery records in parallel
-    const [lines, pickings] = await Promise.all([
+    // All parallel fetches
+    const [lines, pickings, stockQuants] = await Promise.all([
+
+      // SO lines — include route_id for dropship detection
       odooCall(uid, 'sale.order.line', 'search_read',
-        [[
-          ['order_id', 'in', orderIds],
-          ['display_type', '=', false],
-          ['is_delivery', '=', false],
-          ['product_uom_qty', '>', 0],
-        ]],
-        {
-          fields: ['order_id','product_id','name','product_uom_qty','product_uom','price_subtotal'],
-          limit: 5000
-        }
-      ),
-      // Fetch stock.picking (deliveries) to get transport company
+        [[['order_id','in',orderIds],['display_type','=',false],
+          ['is_delivery','=',false],['product_uom_qty','>',0]]],
+        { fields: ['order_id','product_id','name','product_uom_qty','product_uom','route_id'], limit: 5000 }),
+
+      // Pickings — both PICK/* and DEL/* for same orders
       odooCall(uid, 'stock.picking', 'search_read',
-        [[
-          ['sale_id', 'in', orderIds],
-          ['state', 'not in', ['cancel', 'done']],
-          ['picking_type_code', '=', 'outgoing'],
-        ]],
-        { fields: ['sale_id', 'carrier_id', 'x_studio_transport_company'], limit: 1000 }
-      ),
+        [[['sale_id','in',orderIds],['state','not in',['cancel','done']]]],
+        { fields: ['sale_id','name','scheduled_date','picking_type_code',
+                   'carrier_id','x_studio_transport_company','note'], limit: 2000 }),
+
+      // Stock on hand for all locations
+      odooCall(uid, 'stock.quant', 'search_read',
+        [[['location_id','in',LOC_IDS],['quantity','>',0]]],
+        { fields: ['product_id','quantity'], limit: 5000 }),
     ]);
 
-    // Build transport company map by sale order id
-    // Use x_studio_transport_company (custom field) first, fallback to carrier_id name
-    const transportMap = {};
-    pickings.forEach(p => {
-      const sid = Array.isArray(p.sale_id) ? p.sale_id[0] : p.sale_id;
-      const transport = p.x_studio_transport_company ||
-                        (Array.isArray(p.carrier_id) ? p.carrier_id[1] : '') || '';
-      if (sid && transport && !transportMap[sid]) transportMap[sid] = transport;
+    // Qty on hand map by product_id
+    const qohMap = {};
+    stockQuants.forEach(q => {
+      const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
+      qohMap[pid] = (qohMap[pid]||0) + (q.quantity||0);
     });
 
-    // Group lines by order id
+    // Picking maps
+    const pickMap = {};   // sale_id -> PICK scheduled_date
+    const delMap  = {};   // sale_id -> DEL scheduled_date
+    const transportMap = {};
+    const noteMap = {};
+
+    const pickIdMap = {};  // sale_id -> PICK picking id
+    pickings.forEach(p => {
+      const sid = Array.isArray(p.sale_id) ? p.sale_id[0] : p.sale_id;
+      if (!sid) return;
+      const isOutgoing = p.picking_type_code === 'outgoing';
+      const isPick = (p.name||'').startsWith('PICK/');
+      const isDel  = (p.name||'').startsWith('DEL/');
+
+      if (isPick && !pickMap[sid]) { pickMap[sid] = p.scheduled_date || ''; pickIdMap[sid] = p.id; }
+      if (isDel  && !delMap[sid])  delMap[sid]  = p.scheduled_date || '';
+
+      // Transport + note from DEL picking
+      if (isOutgoing) {
+        const transport = p.x_studio_transport_company ||
+                          (Array.isArray(p.carrier_id) ? p.carrier_id[1] : '') || '';
+        if (transport && !transportMap[sid]) transportMap[sid] = transport;
+        if (p.note && !noteMap[sid]) noteMap[sid] = p.note;
+      }
+    });
+
+    // Lines — detect dropship (route_id = 9) and non-stock (x_studio_stocked_item=false handled later)
+    // Group by order, flag each line
     const linesByOrder = {};
+    const productIds = [...new Set(lines.map(l => Array.isArray(l.product_id)?l.product_id[0]:l.product_id).filter(Boolean))];
+
     lines.forEach(l => {
       const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
       if (!linesByOrder[oid]) linesByOrder[oid] = [];
+      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
+      const routeId = Array.isArray(l.route_id) ? l.route_id[0] : (l.route_id||0);
+      const isDropship = routeId === 9;
       linesByOrder[oid].push({
         product: Array.isArray(l.product_id) ? l.product_id[1] : '',
+        product_id: pid,
         description: l.name || '',
         qty: l.product_uom_qty || 0,
         uom: Array.isArray(l.product_uom) ? l.product_uom[1] : '',
-        subtotal: l.price_subtotal || 0,
+        qoh: qohMap[pid] !== undefined ? qohMap[pid] : null,
+        dropship: isDropship,
+      });
+    });
+
+    // Check non-stock via product template (x_studio_stocked_item = false)
+    let nonStockPids = new Set();
+    if (productIds.length > 0) {
+      const prodRecs = await odooCall(uid, 'product.product', 'search_read',
+        [[['id','in',productIds],['product_tmpl_id.x_studio_stocked_item','=',false]]],
+        { fields: ['id'], limit: 2000 });
+      // Note: dotted path may not work — fallback: just use qoh=0 as indicator
+      // Use route=9 (dropship) as primary signal; non-stock = qoh is null/0 and not dropship
+      prodRecs.forEach(p => nonStockPids.add(p.id));
+    }
+
+    // Mark non-stock on lines
+    Object.values(linesByOrder).forEach(lineArr => {
+      lineArr.forEach(l => {
+        l.nonStock = nonStockPids.has(l.product_id);
       });
     });
 
@@ -182,18 +216,20 @@ exports.handler = async function(event) {
       customer: Array.isArray(o.partner_id) ? o.partner_id[1] : '',
       ref: o.client_order_ref || '',
       tag_ids: Array.isArray(o.tag_ids) ? o.tag_ids : [],
-      commitment_date: o.commitment_date || '',
+      team: Array.isArray(o.team_id) ? o.team_id[1] : '',
+      commitment_date: o.commitment_date || '',   // Collection Date (renamed)
+      pick_date: pickMap[o.id] || '',             // Pick Date from PICK/* picking
       delivery_status: o.delivery_status || '',
       salesperson: Array.isArray(o.user_id) ? o.user_id[1] : '',
-      revenue: o.amount_untaxed || 0,
-      margin: o.margin || 0,
       transport: transportMap[o.id] || '',
+      note: noteMap[o.id] || '',
+      pick_id: pickIdMap[o.id] || null,
       lines: linesByOrder[o.id] || [],
     }));
 
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       body: JSON.stringify({ orders: result })
     };
 
