@@ -127,7 +127,7 @@ exports.handler = async function(event) {
     const orderNames = orders.map(o => o.name);
 
     // All parallel fetches
-    step = 'lines+pickings';
+    step = 'lines+pickings+POs';
     const [lines, pickings, poHeaders, stockQuants] = await Promise.all([
 
       // SO lines — include route_id for dropship detection
@@ -142,11 +142,11 @@ exports.handler = async function(event) {
         { fields: ['sale_id','name','scheduled_date','picking_type_code',
                    'carrier_id','x_studio_transport_company','note'], limit: 2000 }),
 
-      // Linked POs via origin field (back-to-back purchase orders)
+      // Linked POs — fetch confirmed POs from last 6 months by write_date
       odooCall(uid, 'purchase.order', 'search_read',
-        [[['state','in',['draft','sent','purchase','done']],
-          ['origin','in',orderNames]]],
-        { fields: ['id','name','origin','partner_id','date_planned'], limit: 500 }),
+        [[['state','in',['purchase','done']]]],
+        { fields: ['id','name','origin','partner_id','date_planned'], limit: 1000,
+          order: 'id desc' }),
 
       // Placeholder — stock fetched after lines
       Promise.resolve([]),
@@ -174,8 +174,12 @@ exports.handler = async function(event) {
     const transportMap = {};
     const noteMap = {};
 
+    // Filter poHeaders to only those whose origin matches an order in our list
+    const orderNameSet = new Set(orderNames);
+    const linkedPOs = poHeaders.filter(p => p.origin && orderNameSet.has(p.origin.trim()));
+
     // Fetch PO lines for linked POs
-    const poIds = poHeaders.map(p => p.id);
+    const poIds = linkedPOs.map(p => p.id);
     let poLines = [];
     if (poIds.length > 0) {
       poLines = await odooCall(uid, 'purchase.order.line', 'search_read',
@@ -186,7 +190,7 @@ exports.handler = async function(event) {
     // Build PO note map: SO name -> [{poName, supplier, product, qty, datePlanned}]
     const poNoteMap = {}; // keyed by SO name
     const poInfoMap2 = {};
-    poHeaders.forEach(p => {
+    linkedPOs.forEach(p => {
       const sup = Array.isArray(p.partner_id) ? p.partner_id[1] : '';
       poInfoMap2[p.id] = { name: p.name, supplier: sup, origin: p.origin };
     });
