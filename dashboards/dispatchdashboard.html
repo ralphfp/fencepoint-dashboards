@@ -354,7 +354,10 @@ function buildOrderCard(o, today) {
       (printed?'disabled':'') +
       ' onclick="printNote(' + o.id + ',this)">' +
       (printed ? '✓ Printed' : '🖨 Print Picking Sheet') +
-      '</button></div>';
+      '</button>' +
+      '<button class="reset-btn" style="' + (printed?'':'display:none;') + 'padding:4px 10px;border-radius:6px;border:1px solid #ccc;background:#fff;font-size:11px;cursor:pointer;color:#888;" ' +
+      'onclick="resetPrintLock(' + o.id + ')" title="Reset print lock">↺ Reprint</button>' +
+      '</div>';
   }
 
   var transportHtml = o.transport ? '<span class="badge badge-transport">🚚 '+o.transport+'</span>' : '';
@@ -392,6 +395,21 @@ function toggleCard(id) {
   if (!lines) return;
   var open = lines.classList.toggle('open');
   if (chev) chev.style.transform = open ? 'rotate(180deg)' : '';
+}
+
+// ── Reset print lock for an order (admin use) ──
+function resetPrintLock(orderId) {
+  var p = getPrinted();
+  delete p[orderId];
+  try { localStorage.setItem(PRINT_KEY, JSON.stringify(p)); } catch(e) {}
+  // Re-render the card's note section
+  var card = document.getElementById('card-' + orderId);
+  if (card) {
+    var btn = card.querySelector('.print-btn');
+    if (btn) { btn.textContent = '🖨 Print Picking Sheet'; btn.disabled = false; btn.classList.remove('printed'); }
+    var reset = card.querySelector('.reset-btn');
+    if (reset) reset.style.display = 'none';
+  }
 }
 
 // ── Print picking note — opens Odoo's own Picking Sheet PDF ──
