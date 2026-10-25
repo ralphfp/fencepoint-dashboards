@@ -400,7 +400,7 @@ function printNote(orderId, btn) {
   if (!o || !o.pick_id) return;
 
   // Open Odoo's native Picking Sheet report for the PICK/* record
-  var url = 'https://gravitai-fencepoint1-main-24360856.dev.odoo.com/report/pdf/stock.report_pickingoperations/' + o.pick_id;
+  var url = 'https://gravitai-fencepoint1-main-24360856.dev.odoo.com/report/pdf/stock.report_picking/' + o.pick_id;
   window.open(url, '_blank');
 
   // Mark as printed and grey out button
@@ -552,7 +552,7 @@ async function load() {
     });
     if (!res.ok) throw new Error('Query failed: ' + res.status);
     var data = await res.json();
-    if (data.error) throw new Error(data.error);
+    if (data.error) throw new Error(data.error + (data.step ? ' [step: '+data.step+']' : '') + (data.stack ? ' — '+data.stack.slice(0,200) : ''));
     allOrders = data.orders || [];
     document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
     applyFilters();
