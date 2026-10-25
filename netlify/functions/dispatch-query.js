@@ -45,7 +45,7 @@ function extractArrayData(xml) {
   const itemRegex=/<struct>([\s\S]*?)<\/struct>/g; let itemMatch;
   while((itemMatch=itemRegex.exec(xml))!==null) {
     const struct={};
-    const memberRegex=/<member>\s*<n>(.*?)<\/name>\s*<value>([\s\S]*?)<\/value>\s*<\/member>/g; let m;
+    const memberRegex=/<member>\s*<name>(.*?)<\/name>\s*<value>([\s\S]*?)<\/value>\s*<\/member>/g; let m;
     while((m=memberRegex.exec(itemMatch[1]))!==null) struct[m[1]]=extractVal(m[2].trim());
     results.push(struct);
   }
