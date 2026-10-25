@@ -128,7 +128,7 @@ exports.handler = async function(event) {
 
     // All parallel fetches
     step = 'lines+pickings+POs';
-    const [lines, pickings, poHeaders, stockQuants] = await Promise.all([
+    const [lines, pickings, poHeaders, _unused] = await Promise.all([
 
       // SO lines — include route_id for dropship detection
       odooCall(uid, 'sale.order.line', 'search_read',
@@ -159,10 +159,10 @@ exports.handler = async function(event) {
     const qohMap = {};
     if (productIds.length > 0) {
       step = 'stock_quant';
-      const stockQuants = await odooCall(uid, 'stock.quant', 'search_read',
+      const quantRecs = await odooCall(uid, 'stock.quant', 'search_read',
         [[['location_id','in',LOC_IDS],['product_id','in',productIds]]],
         { fields: ['product_id','quantity'], limit: 5000 });
-      stockQuants.forEach(q => {
+      quantRecs.forEach(q => {
         const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
         qohMap[pid] = (qohMap[pid]||0) + (q.quantity||0);
       });
