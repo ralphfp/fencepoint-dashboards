@@ -125,9 +125,9 @@ exports.handler = async function(event) {
           ['is_delivery','=',false],['product_uom_qty','>',0]]],
         { fields: ['order_id','product_id','name','product_uom_qty','product_uom','route_id'], limit: 5000 }),
 
-      // Pickings — both PICK/* and DEL/* for same orders
+      // Pickings — both PICK/* and DEL/* for same orders (include Done so PICK sheet always available)
       odooCall(uid, 'stock.picking', 'search_read',
-        [[['sale_id','in',orderIds],['state','not in',['cancel','done']]]],
+        [[['sale_id','in',orderIds],['state','not in',['cancel']]]],
         { fields: ['sale_id','name','scheduled_date','picking_type_code',
                    'carrier_id','x_studio_transport_company','note'], limit: 2000 }),
 
