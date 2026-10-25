@@ -18,7 +18,7 @@ function toXml(val) {
   if (typeof val === 'number') return Number.isInteger(val) ? `<int>${val}</int>` : `<double>${val}</double>`;
   if (typeof val === 'string') return `<string>${val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</string>`;
   if (Array.isArray(val)) return `<array><data>${val.map(v => `<value>${toXml(v)}</value>`).join('')}</data></array>`;
-  if (typeof val === 'object') return `<struct>${Object.entries(val).map(([k,v]) => `<member><n>${k}</n><value>${toXml(v)}</value></member>`).join('')}</struct>`;
+  if (typeof val === 'object') return `<struct>${Object.entries(val).map(([k,v]) => `<member><name>${k}</name><value>${toXml(v)}</value></member>`).join('')}</struct>`;
   return `<string>${val}</string>`;
 }
 
@@ -64,21 +64,29 @@ async function odooCall(uid, model, method, args, kwargs) {
   const xml = await xmlrpc(process.env.ODOO_URL+'/xmlrpc/2/object','execute_kw',
     [process.env.ODOO_DB, uid, process.env.ODOO_API_KEY, model, method, args, kwargs||{}]);
   if (xml.includes('<fault>')) {
-    const msg = xml.match(/<n>faultString<\/name>\s*<value><string>([\s\S]*?)<\/string>/);
+    const msg = xml.match(/<name>faultString<\/name>\s*<value><string>([\s\S]*?)<\/string>/);
     throw new Error(msg ? msg[1].slice(0,300) : 'XML-RPC fault');
   }
   return extractArrayData(xml);
 }
 
-async function odooSearchAll(uid, model, domain, fields, pageSize=500) {
-  let all=[], offset=0;
-  while(true) {
-    const batch = await odooCall(uid, model, 'search_read', [domain], {fields, limit:pageSize, offset});
-    all = all.concat(batch);
-    if (batch.length < pageSize) break;
-    offset += pageSize;
+// Revenue account IDs — fetched dynamically from Odoo, cached per process
+let _revenueAccountIds = null;
+
+async function getRevenueAccountIds(uid) {
+  if (_revenueAccountIds) return _revenueAccountIds;
+  try {
+    // Fetch all income accounts (account_type = income or income_other)
+    const accounts = await odooCall(uid, 'account.account', 'search_read',
+      [[['account_type', 'in', ['income', 'income_other']]]],
+      { fields: ['id'], limit: 500 });
+    // Exclude rent accounts 99 (491000 Rental) and 224 (710000 Rates)
+    const ids = accounts.map(a => a.id).filter(id => id !== 99 && id !== 224);
+    _revenueAccountIds = ids.length > 0 ? ids : [45, 46, 307, 280, 278, 293, 205, 286];
+  } catch(e) {
+    _revenueAccountIds = [45, 46, 307, 280, 278, 293, 205, 286];
   }
-  return all;
+  return _revenueAccountIds;
 }
 
 exports.handler = async function(event) {
