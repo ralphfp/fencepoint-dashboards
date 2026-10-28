@@ -70,25 +70,6 @@ async function odooCall(uid, model, method, args, kwargs) {
   return extractArrayData(xml);
 }
 
-// Revenue account IDs — fetched dynamically from Odoo, cached per process
-let _revenueAccountIds = null;
-
-async function getRevenueAccountIds(uid) {
-  if (_revenueAccountIds) return _revenueAccountIds;
-  try {
-    // Fetch all income accounts (account_type = income or income_other)
-    const accounts = await odooCall(uid, 'account.account', 'search_read',
-      [[['account_type', 'in', ['income', 'income_other']]]],
-      { fields: ['id'], limit: 500 });
-    // Exclude rent accounts 99 (491000 Rental) and 224 (710000 Rates)
-    const ids = accounts.map(a => a.id).filter(id => id !== 99 && id !== 224);
-    _revenueAccountIds = ids.length > 0 ? ids : [45, 46, 307, 280, 278, 293, 205, 286];
-  } catch(e) {
-    _revenueAccountIds = [45, 46, 307, 280, 278, 293, 205, 286];
-  }
-  return _revenueAccountIds;
-}
-
 exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
   try {
@@ -96,12 +77,10 @@ exports.handler = async function(event) {
     const uid = await getUid();
 
     const LOC_IDS = [8,11,23,24,25,26,27,28,29,30,31,32,33,34,35,36];
-
-    // Fetch pending (from today) + all part-shipped — both Commercial AND Timber teams
     const orderFields = ['id','name','partner_id','commitment_date','delivery_status',
                          'user_id','client_order_ref','tag_ids','team_id'];
 
-    let step = 'orders';
+    // Step 1: fetch orders
     const [pendingOrders, startedOrders] = await Promise.all([
       odooCall(uid, 'sale.order', 'search_read',
         [[['state','=','sale'],['commitment_date','>=',today+' 00:00:00'],
@@ -126,39 +105,24 @@ exports.handler = async function(event) {
     const orderIds   = orders.map(o => o.id);
     const orderNames = orders.map(o => o.name);
 
-    // All parallel fetches
-    step = 'lines+pickings+POs';
-    const [lines, pickings, poHeaders, _unused] = await Promise.all([
-
-      // SO lines — include route_id for dropship detection
+    // Step 2: lines + pickings in parallel
+    const [lines, pickings] = await Promise.all([
       odooCall(uid, 'sale.order.line', 'search_read',
         [[['order_id','in',orderIds],['display_type','=',false],
           ['is_delivery','=',false],['product_uom_qty','>',0]]],
         { fields: ['order_id','product_id','name','product_uom_qty','product_uom','route_id'], limit: 5000 }),
-
-      // Pickings — both PICK/* and DEL/* for same orders (include Done so PICK sheet always available)
       odooCall(uid, 'stock.picking', 'search_read',
         [[['sale_id','in',orderIds],['state','not in',['cancel']]]],
         { fields: ['sale_id','name','scheduled_date','picking_type_code',
                    'carrier_id','x_studio_transport_company','note'], limit: 2000 }),
-
-      // Linked POs — fetch confirmed POs from last 6 months by write_date
-      odooCall(uid, 'purchase.order', 'search_read',
-        [[['state','in',['purchase','done']]]],
-        { fields: ['id','name','origin','partner_id','date_planned'], limit: 1000,
-          order: 'id desc' }),
-
-      // Placeholder — stock fetched after lines
-      Promise.resolve([]),
     ]);
 
-    // Group lines to get product IDs first
-    const productIds = [...new Set(lines.map(l => Array.isArray(l.product_id)?l.product_id[0]:l.product_id).filter(Boolean))];
+    // Step 3: stock quant — targeted to products on these orders
+    const productIds = [...new Set(lines.map(l =>
+      Array.isArray(l.product_id) ? l.product_id[0] : l.product_id).filter(Boolean))];
 
-    // Targeted stock quant fetch — only products on these orders
     const qohMap = {};
     if (productIds.length > 0) {
-      step = 'stock_quant';
       const quantRecs = await odooCall(uid, 'stock.quant', 'search_read',
         [[['location_id','in',LOC_IDS],['product_id','in',productIds]]],
         { fields: ['product_id','quantity'], limit: 5000 });
@@ -168,156 +132,106 @@ exports.handler = async function(event) {
       });
     }
 
-    // Picking maps
-    const pickMap = {};   // sale_id -> PICK scheduled_date
-    const delMap  = {};   // sale_id -> DEL scheduled_date
-    const transportMap = {};
-    const noteMap = {};
+    // Step 4: PO notes — linked POs via origin
+    const poNoteMap = {};
+    const poHeaders = await odooCall(uid, 'purchase.order', 'search_read',
+      [[['state','in',['purchase','done']],['origin','in',orderNames]]],
+      { fields: ['id','name','origin','partner_id'], limit: 200 });
 
-    // Filter poHeaders to only those whose origin matches an order in our list
-    const orderNameSet = new Set(orderNames);
-    const linkedPOs = poHeaders.filter(p => p.origin && orderNameSet.has(p.origin.trim()));
-
-    // Fetch PO lines for linked POs
-    const poIds = linkedPOs.map(p => p.id);
-    let poLines = [];
-    if (poIds.length > 0) {
-      const allPoLines = await odooCall(uid, 'purchase.order.line', 'search_read',
+    if (poHeaders.length > 0) {
+      const poIds = poHeaders.map(p => p.id);
+      const poInfoMap = {};
+      poHeaders.forEach(p => {
+        poInfoMap[p.id] = { name: p.name, supplier: Array.isArray(p.partner_id)?p.partner_id[1]:'', origin: p.origin };
+      });
+      const poLineRecs = await odooCall(uid, 'purchase.order.line', 'search_read',
         [[['order_id','in',poIds]]],
-        { fields: ['order_id','product_id','product_qty','qty_received','date_planned'], limit: 2000 });
-      // Filter in JS — can't compare two fields in XML-RPC domain
-      poLines = allPoLines.filter(l => (l.product_qty||0) > (l.qty_received||0));
-    }
-
-    // Build PO note map: SO name -> [{poName, supplier, product, qty, datePlanned}]
-    const poNoteMap = {}; // keyed by SO name
-    const poInfoMap2 = {};
-    linkedPOs.forEach(p => {
-      const sup = Array.isArray(p.partner_id) ? p.partner_id[1] : '';
-      poInfoMap2[p.id] = { name: p.name, supplier: sup, origin: p.origin };
-    });
-    poLines.forEach(l => {
-      const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
-      const info = poInfoMap2[oid];
-      if (!info) return;
-      const soName = info.origin;
-      if (!poNoteMap[soName]) poNoteMap[soName] = [];
-      const pid = Array.isArray(l.product_id) ? l.product_id[1] : '';
-      const due = l.date_planned ? l.date_planned.slice(0,10) : '';
-      const outstanding = (l.product_qty||0) - (l.qty_received||0);
-      if (outstanding > 0) {
-        poNoteMap[soName].push({
+        { fields: ['order_id','product_id','product_qty','qty_received','date_planned'], limit: 1000 });
+      poLineRecs.forEach(l => {
+        const outstanding = (l.product_qty||0) - (l.qty_received||0);
+        if (outstanding <= 0) return;
+        const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
+        const info = poInfoMap[oid];
+        if (!info) return;
+        if (!poNoteMap[info.origin]) poNoteMap[info.origin] = [];
+        poNoteMap[info.origin].push({
           poName: info.name,
           supplier: info.supplier,
-          product: pid,
+          product: Array.isArray(l.product_id) ? l.product_id[1] : '',
           qty: outstanding,
-          due,
+          due: l.date_planned ? l.date_planned.slice(0,10) : '',
         });
-      }
+      });
+    }
+
+    // Non-stock: only flag products with zero QOH AND on a dropship route
+    // x_studio_stocked_item is unreliable — many core products have it unticked
+    const nonStockPids = new Set(); // now determined per-line below using qoh + route
+
+    // Build line map
+    const linesByOrder = {};
+    lines.forEach(l => {
+      const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
+      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
+      if (!linesByOrder[oid]) linesByOrder[oid] = [];
+      linesByOrder[oid].push({
+        product:     Array.isArray(l.product_id) ? l.product_id[1] : '',
+        product_id:  pid,
+        description: l.name || '',
+        qty:         l.product_uom_qty || 0,
+        uom:         Array.isArray(l.product_uom) ? l.product_uom[1] : '',
+        qoh:         qohMap[pid] !== undefined ? qohMap[pid] : 0,
+        dropship:    (Array.isArray(l.route_id) ? l.route_id[0] : (l.route_id||0)) === 9,
+        nonStock:    false, // only dropship flag used — x_studio_stocked_item unreliable
+      });
     });
 
-    const pickIdMap = {};  // sale_id -> PICK picking id
+    // Build picking maps
+    const pickMap = {}, pickIdMap = {}, delMap = {}, transportMap = {}, noteMap = {};
     pickings.forEach(p => {
       const sid = Array.isArray(p.sale_id) ? p.sale_id[0] : p.sale_id;
       if (!sid) return;
-      const isOutgoing = p.picking_type_code === 'outgoing';
-      const isPick = (p.name||'').startsWith('PICK/');
-      const isDel  = (p.name||'').startsWith('DEL/');
-
-      if (isPick && !pickMap[sid]) { pickMap[sid] = p.scheduled_date || ''; pickIdMap[sid] = p.id; }
-      if (isDel  && !delMap[sid])  delMap[sid]  = p.scheduled_date || '';
-
-      // Transport + note from DEL picking
-      if (isOutgoing) {
-        const transport = p.x_studio_transport_company ||
-                          (Array.isArray(p.carrier_id) ? p.carrier_id[1] : '') || '';
-        if (transport && !transportMap[sid]) transportMap[sid] = transport;
+      if ((p.name||'').startsWith('PICK/') && !pickMap[sid]) {
+        pickMap[sid] = p.scheduled_date || '';
+        pickIdMap[sid] = p.id;
+      }
+      if ((p.name||'').startsWith('DEL/') && !delMap[sid]) delMap[sid] = p.scheduled_date || '';
+      if (p.picking_type_code === 'outgoing') {
+        const t = p.x_studio_transport_company || (Array.isArray(p.carrier_id)?p.carrier_id[1]:'') || '';
+        if (t && !transportMap[sid]) transportMap[sid] = t;
         if (p.note && !noteMap[sid]) noteMap[sid] = p.note;
       }
     });
 
-    // Lines — detect dropship (route_id = 9) and non-stock (x_studio_stocked_item=false handled later)
-    // Group by order, flag each line
-    const linesByOrder = {};
-
-    lines.forEach(l => {
-      const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
-      if (!linesByOrder[oid]) linesByOrder[oid] = [];
-      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
-      const routeId = Array.isArray(l.route_id) ? l.route_id[0] : (l.route_id||0);
-      const isDropship = routeId === 9;
-      linesByOrder[oid].push({
-        product: Array.isArray(l.product_id) ? l.product_id[1] : '',
-        product_id: pid,
-        description: l.name || '',
-        qty: l.product_uom_qty || 0,
-        uom: Array.isArray(l.product_uom) ? l.product_uom[1] : '',
-        qoh: qohMap[pid] !== undefined ? qohMap[pid] : null,
-        dropship: isDropship,
-      });
-    });
-
-    // Check non-stock: get template IDs for our product variants, then check x_studio_stocked_item
-    // Two-step to avoid dotted path in XML-RPC domain
-    let nonStockPids = new Set();
-    if (productIds.length > 0) {
-      step = 'non_stock_variants';
-      const variantRecs = await odooCall(uid, 'product.product', 'search_read',
-        [[['id','in',productIds]]],
-        { fields: ['id','product_tmpl_id'], limit: 2000 });
-      const tmplIds = [...new Set(variantRecs.map(p => Array.isArray(p.product_tmpl_id)?p.product_tmpl_id[0]:p.product_tmpl_id))];
-      const tmplToVariants = {};
-      variantRecs.forEach(p => {
-        const tid = Array.isArray(p.product_tmpl_id)?p.product_tmpl_id[0]:p.product_tmpl_id;
-        if (!tmplToVariants[tid]) tmplToVariants[tid] = [];
-        tmplToVariants[tid].push(p.id);
-      });
-      if (tmplIds.length > 0) {
-        const nonStockTmpls = await odooCall(uid, 'product.template', 'search_read',
-          [[['id','in',tmplIds],['x_studio_stocked_item','=',false]]],
-          { fields: ['id'], limit: 2000 });
-        nonStockTmpls.forEach(t => {
-          (tmplToVariants[t.id]||[]).forEach(pid => nonStockPids.add(pid));
-        });
-      }
-    }
-
-    // Mark non-stock on lines
-    Object.values(linesByOrder).forEach(lineArr => {
-      lineArr.forEach(l => {
-        l.nonStock = nonStockPids.has(l.product_id);
-      });
-    });
-
     const result = orders.map(o => ({
-      id: o.id,
-      name: o.name,
-      customer: Array.isArray(o.partner_id) ? o.partner_id[1] : '',
-      ref: o.client_order_ref || '',
-      tag_ids: Array.isArray(o.tag_ids) ? o.tag_ids : [],
-      team: Array.isArray(o.team_id) ? o.team_id[1] : '',
-      commitment_date: o.commitment_date || '',   // Collection Date (renamed)
-      pick_date: pickMap[o.id] || '',             // Pick Date from PICK/* picking
+      id:              o.id,
+      name:            o.name,
+      customer:        Array.isArray(o.partner_id) ? o.partner_id[1] : '',
+      ref:             o.client_order_ref || '',
+      tag_ids:         Array.isArray(o.tag_ids) ? o.tag_ids : [],
+      team:            Array.isArray(o.team_id) ? o.team_id[1] : '',
+      commitment_date: o.commitment_date || '',
+      pick_date:       pickMap[o.id] || '',
       delivery_status: o.delivery_status || '',
-      salesperson: Array.isArray(o.user_id) ? o.user_id[1] : '',
-      transport: transportMap[o.id] || '',
-      note: noteMap[o.id] || '',
-      pick_id: pickIdMap[o.id] || null,
-      poNotes: poNoteMap[o.name] || [],
-      lines: linesByOrder[o.id] || [],
+      salesperson:     Array.isArray(o.user_id) ? o.user_id[1] : '',
+      transport:       transportMap[o.id] || '',
+      note:            noteMap[o.id] || '',
+      pick_id:         pickIdMap[o.id] || null,
+      poNotes:         poNoteMap[o.name] || [],
+      lines:           linesByOrder[o.id] || [],
     }));
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-      body: JSON.stringify({ orders: result })
+      body: JSON.stringify({ orders: result }),
     };
 
   } catch(err) {
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: err.message, step: typeof step !== 'undefined' ? step : 'unknown', stack: err.stack ? err.stack.slice(0,500) : '' })
+      body: JSON.stringify({ error: err.message, stack: err.stack ? err.stack.slice(0,400) : '' }),
     };
   }
 };
