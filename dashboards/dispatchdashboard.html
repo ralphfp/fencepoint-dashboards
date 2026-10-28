@@ -244,7 +244,6 @@ body { font-family: 'Plus Jakarta Sans','Segoe UI',system-ui,sans-serif; backgro
   <div class="legend-item"><span class="legend-dot" style="background:#1565C0"></span>Part Shipped</div>
   <div class="legend-item"><span class="legend-dot" style="background:#bf360c"></span>Not Started</div>
   <div class="legend-item"><span class="legend-dot" style="background:#880e4f"></span>Dropship line</div>
-  <div class="legend-item"><span class="legend-dot" style="background:#4a148c"></span>Special / Non-stock line</div>
   <div class="legend-item"><span class="legend-dot" style="background:#2e7d32"></span>QOH sufficient</div>
   <div class="legend-item"><span class="legend-dot" style="background:#e65100"></span>QOH low vs order qty</div>
   <div class="legend-item"><span class="legend-dot" style="background:#b71c1c"></span>No stock</div>
@@ -382,7 +381,6 @@ function buildOrderCard(o, today) {
   var linesHtml = o.lines.map(function(l) {
     var flags = '';
     if (l.dropship) flags += '<span class="badge badge-dropship" style="margin-left:6px">Dropship</span>';
-    if (l.nonStock && !l.dropship) flags += '<span class="badge badge-nonstock" style="margin-left:6px">Special/Non-stock</span>';
 
     var qoh = l.qoh;
     var qohHtml = '';
