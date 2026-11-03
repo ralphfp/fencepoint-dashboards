@@ -393,6 +393,11 @@ function buildOrderCard(o, today) {
     } else {
       qohHtml = '<span class="qoh-badge qoh-ok">' + Math.round(qoh) + '</span>';
     }
+    // Post kits: QOH is the base post code's stock
+    if (l.qohCode && !l.dropship) {
+      qohHtml = qohHtml.replace('<span class="qoh-badge', '<span title="Stock of base post ' + l.qohCode + '" class="qoh-badge') +
+        '<div style="font-size:10px;color:var(--slate-lt);margin-top:2px;">' + l.qohCode + '</div>';
+    }
 
     return '<tr>' +
       '<td>' + (l.product || l.description.split('\n')[0]) + flags + '</td>' +
@@ -502,20 +507,42 @@ function resetPrintLock(orderId) {
   }
 }
 
-// ── Print picking note — opens Odoo's own Picking Sheet PDF ──
+// ── Print picking sheet — runs the same action as the "Print" button on the PICK form ──
 function printNote(orderId, btn) {
   var o = allOrders.find(function(x){return x.id===orderId;});
   if (!o || !o.pick_id) return;
 
-  // Open Odoo's native Picking Sheet report for the PICK/* record
-  var url = 'https://gravitai-fencepoint1-main-24360856.dev.odoo.com/report/pdf/stock.report_picking/' + o.pick_id;
-  window.open(url, '_blank');
-
-  // Mark as printed and grey out button
-  markPrinted(orderId);
-  btn.textContent = '✓ Printed';
+  // Open the tab inside the click so pop-up blockers allow it, then point it at the report
+  var win = window.open('', '_blank');
+  if (win) win.document.write('<p style="font-family:sans-serif;color:#666;padding:20px;">Preparing picking sheet…</p>');
+  var originalLabel = btn.textContent;
+  btn.textContent = '⏳ Preparing…';
   btn.disabled = true;
-  btn.classList.add('printed');
+
+  fetch('/.netlify/functions/picking-print', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pickId: o.pick_id })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.error || !d.url) throw new Error(d.error || 'No report returned');
+    if (win) win.location.href = d.url; else window.open(d.url, '_blank');
+    // Mark as printed and grey out button
+    markPrinted(orderId);
+    btn.textContent = '✓ Printed';
+    btn.disabled = true;
+    btn.classList.add('printed');
+    var card = document.getElementById('card-' + orderId);
+    var reset = card && card.querySelector('.reset-btn');
+    if (reset) reset.style.display = '';
+  })
+  .catch(function(err){
+    if (win) win.close();
+    btn.textContent = originalLabel;
+    btn.disabled = false;
+    alert('Could not print picking sheet: ' + err.message);
+  });
 }
 
 // ── List render ──
