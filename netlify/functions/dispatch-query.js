@@ -124,14 +124,54 @@ exports.handler = async function(event) {
     // Post kits (default_code ending -K, e.g. AVM30G-02-K, AVM24G-02-Z-K) are not held
     // in stock as kits — QOH comes from the base post code (strip the -K suffix)
     const kitBaseMap = {};   // kit product id -> { basePid, baseCode }
+    const gateKitMap = {};   // gate kit product id -> [{ pid, qty }] components
     if (productIds.length > 0) {
       const prodRecs = await odooCall(uid, 'product.product', 'search_read',
-        [[['id','in',productIds]]], { fields: ['id','default_code'], limit: 5000 });
+        [[['id','in',productIds]]], { fields: ['id','default_code','product_tmpl_id'], limit: 5000 });
       const kitCodes = {};   // kit pid -> base code
+      const tmplToPids = {}; // template id -> [product ids] (non -K products only)
       prodRecs.forEach(p => {
         const code = (p.default_code || '').trim();
-        if (/-K$/i.test(code)) kitCodes[p.id] = code.replace(/-K$/i, '');
+        if (/-K$/i.test(code)) { kitCodes[p.id] = code.replace(/-K$/i, ''); return; }
+        const tid = Array.isArray(p.product_tmpl_id) ? p.product_tmpl_id[0] : p.product_tmpl_id;
+        if (tid) { if (!tmplToPids[tid]) tmplToPids[tid] = []; tmplToPids[tid].push(p.id); }
       });
+
+      // Gates (and any other non -K kit) are phantom BoMs — stock sits on the parts
+      // (leaves, hinge posts, caps, hinges). QOH = complete sets buildable from parts.
+      const tmplIds = Object.keys(tmplToPids).map(Number);
+      if (tmplIds.length > 0) {
+        const boms = await odooCall(uid, 'mrp.bom', 'search_read',
+          [[['type','=','phantom'],['product_tmpl_id','in',tmplIds]]],
+          { fields: ['id','product_tmpl_id','product_id','product_qty'], limit: 1000 });
+        if (boms.length > 0) {
+          const bomLines = await odooCall(uid, 'mrp.bom.line', 'search_read',
+            [[['bom_id','in',boms.map(b => b.id)]]],
+            { fields: ['bom_id','product_id','product_qty'], limit: 5000 });
+          const compsByBom = {};
+          bomLines.forEach(bl => {
+            const bid = Array.isArray(bl.bom_id) ? bl.bom_id[0] : bl.bom_id;
+            const cpid = Array.isArray(bl.product_id) ? bl.product_id[0] : bl.product_id;
+            if (!bid || !cpid) return;
+            if (!compsByBom[bid]) compsByBom[bid] = [];
+            compsByBom[bid].push({ pid: cpid, qty: bl.product_qty || 1 });
+          });
+          // Variant-specific BoM wins over a template-wide one
+          boms.forEach(b => {
+            const tid = Array.isArray(b.product_tmpl_id) ? b.product_tmpl_id[0] : b.product_tmpl_id;
+            const vid = Array.isArray(b.product_id) ? b.product_id[0] : (b.product_id || 0);
+            const comps = compsByBom[b.id];
+            if (!comps || !comps.length) return;
+            const bomQty = b.product_qty || 1;
+            const scaled = comps.map(c => ({ pid: c.pid, qty: c.qty / bomQty }));
+            (tmplToPids[tid] || []).forEach(pid => {
+              if (vid && vid !== pid) return;
+              if (!vid && gateKitMap[pid] && gateKitMap[pid].variant) return;
+              gateKitMap[pid] = { comps: scaled, variant: !!vid };
+            });
+          });
+        }
+      }
       const baseCodes = [...new Set(Object.values(kitCodes))];
       if (baseCodes.length > 0) {
         const baseRecs = await odooCall(uid, 'product.product', 'search_read',
@@ -144,7 +184,9 @@ exports.handler = async function(event) {
       }
     }
     const basePids = Object.values(kitBaseMap).map(k => k.basePid);
-    const quantPids = [...new Set([...productIds, ...basePids])];
+    const compPids = [];
+    Object.values(gateKitMap).forEach(g => g.comps.forEach(c => compPids.push(c.pid)));
+    const quantPids = [...new Set([...productIds, ...basePids, ...compPids])];
 
     const qohMap = {};
     if (quantPids.length > 0) {
@@ -193,6 +235,17 @@ exports.handler = async function(event) {
     // x_studio_stocked_item is unreliable — many core products have it unticked
     const nonStockPids = new Set(); // now determined per-line below using qoh + route
 
+    // Gate kit QOH = lowest number of complete sets across all parts
+    const gateQoh = {};
+    Object.entries(gateKitMap).forEach(([gpid, g]) => {
+      let sets = Infinity;
+      g.comps.forEach(c => {
+        const have = Math.max(0, qohMap[c.pid] || 0);
+        sets = Math.min(sets, c.qty > 0 ? Math.floor(have / c.qty + 1e-9) : Infinity);
+      });
+      gateQoh[gpid] = sets === Infinity ? 0 : sets;
+    });
+
     // Build line map
     const linesByOrder = {};
     lines.forEach(l => {
@@ -207,8 +260,10 @@ exports.handler = async function(event) {
         description: l.name || '',
         qty:         l.product_uom_qty || 0,
         uom:         Array.isArray(l.product_uom) ? l.product_uom[1] : '',
-        qoh:         qohMap[stockPid] !== undefined ? qohMap[stockPid] : 0,
+        qoh:         gateQoh[pid] !== undefined ? gateQoh[pid]
+                     : (qohMap[stockPid] !== undefined ? qohMap[stockPid] : 0),
         qohCode:     kit ? kit.baseCode : '', // set when QOH is taken from the base post code
+        qohSets:     gateQoh[pid] !== undefined, // gate kit: QOH = complete sets from parts
         dropship:    (Array.isArray(l.route_id) ? l.route_id[0] : (l.route_id||0)) === 9,
         nonStock:    false, // only dropship flag used — x_studio_stocked_item unreliable
       });
