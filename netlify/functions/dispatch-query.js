@@ -121,10 +121,35 @@ exports.handler = async function(event) {
     const productIds = [...new Set(lines.map(l =>
       Array.isArray(l.product_id) ? l.product_id[0] : l.product_id).filter(Boolean))];
 
-    const qohMap = {};
+    // Post kits (default_code ending -K, e.g. AVM30G-02-K, AVM24G-02-Z-K) are not held
+    // in stock as kits — QOH comes from the base post code (strip the -K suffix)
+    const kitBaseMap = {};   // kit product id -> { basePid, baseCode }
     if (productIds.length > 0) {
+      const prodRecs = await odooCall(uid, 'product.product', 'search_read',
+        [[['id','in',productIds]]], { fields: ['id','default_code'], limit: 5000 });
+      const kitCodes = {};   // kit pid -> base code
+      prodRecs.forEach(p => {
+        const code = (p.default_code || '').trim();
+        if (/-K$/i.test(code)) kitCodes[p.id] = code.replace(/-K$/i, '');
+      });
+      const baseCodes = [...new Set(Object.values(kitCodes))];
+      if (baseCodes.length > 0) {
+        const baseRecs = await odooCall(uid, 'product.product', 'search_read',
+          [[['default_code','in',baseCodes]]], { fields: ['id','default_code'], limit: 1000 });
+        const baseIdByCode = {};
+        baseRecs.forEach(b => { baseIdByCode[(b.default_code||'').trim()] = b.id; });
+        Object.entries(kitCodes).forEach(([kitPid, baseCode]) => {
+          if (baseIdByCode[baseCode]) kitBaseMap[kitPid] = { basePid: baseIdByCode[baseCode], baseCode };
+        });
+      }
+    }
+    const basePids = Object.values(kitBaseMap).map(k => k.basePid);
+    const quantPids = [...new Set([...productIds, ...basePids])];
+
+    const qohMap = {};
+    if (quantPids.length > 0) {
       const quantRecs = await odooCall(uid, 'stock.quant', 'search_read',
-        [[['location_id','in',LOC_IDS],['product_id','in',productIds]]],
+        [[['location_id','in',LOC_IDS],['product_id','in',quantPids]]],
         { fields: ['product_id','quantity'], limit: 5000 });
       quantRecs.forEach(q => {
         const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
@@ -173,6 +198,8 @@ exports.handler = async function(event) {
     lines.forEach(l => {
       const oid = Array.isArray(l.order_id) ? l.order_id[0] : l.order_id;
       const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
+      const kit = kitBaseMap[pid];
+      const stockPid = kit ? kit.basePid : pid;
       if (!linesByOrder[oid]) linesByOrder[oid] = [];
       linesByOrder[oid].push({
         product:     Array.isArray(l.product_id) ? l.product_id[1] : '',
@@ -180,7 +207,8 @@ exports.handler = async function(event) {
         description: l.name || '',
         qty:         l.product_uom_qty || 0,
         uom:         Array.isArray(l.product_uom) ? l.product_uom[1] : '',
-        qoh:         qohMap[pid] !== undefined ? qohMap[pid] : 0,
+        qoh:         qohMap[stockPid] !== undefined ? qohMap[stockPid] : 0,
+        qohCode:     kit ? kit.baseCode : '', // set when QOH is taken from the base post code
         dropship:    (Array.isArray(l.route_id) ? l.route_id[0] : (l.route_id||0)) === 9,
         nonStock:    false, // only dropship flag used — x_studio_stocked_item unreliable
       });
