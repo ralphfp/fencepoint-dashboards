@@ -406,10 +406,14 @@ function buildOrderCard(o, today) {
 
     return '<tr>' +
       '<td>' + (l.product || l.description.split('\n')[0]) + flags + '</td>' +
-      '<td style="text-align:center">' + Math.round(l.qty) + ' ' + l.uom + '</td>' +
+      '<td style="text-align:center">' + Math.round(l.qty) + ' ' + l.uom +
+        (l.deliveredQty > 0 ? '<div style="font-size:10px;color:var(--slate-lt);margin-top:2px;">' +
+          Math.round(l.deliveredQty) + ' of ' + Math.round(l.orderedQty) + ' shipped</div>' : '') +
+      '</td>' +
       '<td style="text-align:center">' + qohHtml + '</td>' +
       '</tr>';
   }).join('');
+  if (!linesHtml) linesHtml = '<tr><td colspan="3" style="color:var(--slate-lt);text-align:center;">All lines shipped — awaiting Odoo status update</td></tr>';
 
   // Auto PO notes
   var autoNoteHtml = '';
@@ -471,7 +475,7 @@ function buildOrderCard(o, today) {
     '</div>' +
     '<div class="order-lines" id="lines-' + o.id + '">' +
       '<table class="lines-table">' +
-        '<thead><tr><th>Product</th><th style="text-align:center">Ordered Qty</th><th style="text-align:center">QOH</th></tr></thead>' +
+        '<thead><tr><th>Product</th><th style="text-align:center">To Ship</th><th style="text-align:center">QOH</th></tr></thead>' +
         '<tbody>' + linesHtml + '</tbody>' +
       '</table>' +
       '<div class="notes-section">' + autoNoteHtml + freeNoteHtml + '</div>' +
