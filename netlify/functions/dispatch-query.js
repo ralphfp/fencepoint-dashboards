@@ -111,7 +111,7 @@ exports.handler = async function(event) {
       odooCall(uid, 'sale.order.line', 'search_read',
         [[['order_id','in',orderIds],['display_type','=',false],
           ['is_delivery','=',false],['product_uom_qty','>',0]]],
-        { fields: ['order_id','product_id','name','product_uom_qty','product_uom','route_id'], limit: 5000 }),
+        { fields: ['order_id','product_id','name','product_uom_qty','qty_delivered','product_uom','route_id'], limit: 5000 }),
       odooCall(uid, 'stock.picking', 'search_read',
         [[['sale_id','in',orderIds],['state','not in',['cancel']]]],
         { fields: ['sale_id','name','scheduled_date','picking_type_code',
@@ -254,12 +254,19 @@ exports.handler = async function(event) {
       const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
       const kit = kitBaseMap[pid];
       const stockPid = kit ? kit.basePid : pid;
+      // Only show what is still to ship (field comparison done in JS, not in the domain)
+      const ordered   = l.product_uom_qty || 0;
+      const delivered = l.qty_delivered || 0;
+      const remaining = ordered - delivered;
+      if (remaining <= 0) return;
       if (!linesByOrder[oid]) linesByOrder[oid] = [];
       linesByOrder[oid].push({
         product:     Array.isArray(l.product_id) ? l.product_id[1] : '',
         product_id:  pid,
         description: l.name || '',
-        qty:         l.product_uom_qty || 0,
+        qty:         remaining,
+        orderedQty:  ordered,
+        deliveredQty: delivered,
         uom:         Array.isArray(l.product_uom) ? l.product_uom[1] : '',
         qoh:         gateQoh[pid] !== undefined ? gateQoh[pid]
                      : (qohMap[stockPid] !== undefined ? qohMap[stockPid] : 0),
