@@ -83,11 +83,12 @@ exports.handler = async function(event) {
     // Step 1: fetch orders
     const [pendingOrders, startedOrders] = await Promise.all([
       odooCall(uid, 'sale.order', 'search_read',
-        [[['state','=','sale'],['commitment_date','>=',today+' 00:00:00'],
-          ['delivery_status','=','pending']]],
+        // No date limit — overdue not-started orders must stay visible (Overdue section)
+        [[['state','=','sale'],['delivery_status','=','pending']]],
         { fields: orderFields, order: 'commitment_date asc', limit: 500 }),
       odooCall(uid, 'sale.order', 'search_read',
-        [[['state','=','sale'],['delivery_status','=','started']]],
+        // Odoo 18 has two part-shipped states: 'started' and 'partial' (Partially Delivered)
+        [[['state','=','sale'],['delivery_status','in',['started','partial']]]],
         { fields: orderFields, order: 'commitment_date asc', limit: 500 }),
     ]);
 
@@ -295,7 +296,8 @@ exports.handler = async function(event) {
       team:            Array.isArray(o.team_id) ? o.team_id[1] : '',
       commitment_date: o.commitment_date || '',
       pick_date:       pickMap[o.id] || '',
-      delivery_status: o.delivery_status || '',
+      // 'partial' is normalised to 'started' so the dashboard treats both as Part Shipped
+      delivery_status: o.delivery_status === 'partial' ? 'started' : (o.delivery_status || ''),
       salesperson:     Array.isArray(o.user_id) ? o.user_id[1] : '',
       transport:       transportMap[o.id] || '',
       note:            noteMap[o.id] || '',
