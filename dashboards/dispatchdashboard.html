@@ -564,19 +564,16 @@ function renderList(orders) {
 
   var today = todayStr(), week = endOfWeek();
 
-  // Split: part-shipped (any date) then pending grouped by date
-  var partShipped = orders.filter(function(o){return o.delivery_status==='started';});
-  var pending     = orders.filter(function(o){return o.delivery_status!=='started';});
-  var overdue     = pending.filter(function(o){return dateKey(o.commitment_date)<today;});
-  var upcoming    = pending.filter(function(o){return dateKey(o.commitment_date)>=today;});
+  // Overdue (any status) at the top, then everything else in collection date order.
+  // Part-shipped orders sit in their date slot and keep their Part Shipped badge.
+  var byDate = function(a, b) {
+    var da = dateKey(a.commitment_date) || '9999', db = dateKey(b.commitment_date) || '9999';
+    return da < db ? -1 : da > db ? 1 : 0;
+  };
+  var overdue  = orders.filter(function(o){ var d = dateKey(o.commitment_date); return d && d < today; }).sort(byDate);
+  var upcoming = orders.filter(function(o){ var d = dateKey(o.commitment_date); return !d || d >= today; });
 
   var html = '';
-
-  // Part shipped section
-  if (partShipped.length) {
-    html += '<div class="day-heading today-heading">⚡ Part Shipped — In Progress <span class="day-count">('+partShipped.length+')</span><div class="day-heading-line"></div></div>';
-    partShipped.forEach(function(o){ html += buildOrderCard(o, today); });
-  }
 
   // Overdue
   if (overdue.length) {
