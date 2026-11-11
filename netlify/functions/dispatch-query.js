@@ -122,24 +122,24 @@ exports.handler = async function(event) {
     const productIds = [...new Set(lines.map(l =>
       Array.isArray(l.product_id) ? l.product_id[0] : l.product_id).filter(Boolean))];
 
-    // Post kits (default_code ending -K, e.g. AVM30G-02-K, AVM24G-02-Z-K) are not held
-    // in stock as kits — QOH comes from the base post code (strip the -K suffix)
-    const kitBaseMap = {};   // kit product id -> { basePid, baseCode }
-    const gateKitMap = {};   // gate kit product id -> [{ pid, qty }] components
+    // Post kits (default_code ending -K) are not held in stock as kits. QOH comes from the
+    // post on the kit's Bill of Materials (e.g. AVM20G-09-Z-K -> AVM20G-02-Z). If no BoM post
+    // is found, fall back to stripping the -K suffix (AVM30G-02-K -> AVM30G-02).
+    // Gates (any other phantom kit) — stock sits on the parts; QOH = complete sets from parts.
+    const kitBaseMap = {};   // post kit product id -> { basePid, baseCode }
+    const gateKitMap = {};   // gate kit product id -> { comps: [{ pid, qty }], variant }
     if (productIds.length > 0) {
       const prodRecs = await odooCall(uid, 'product.product', 'search_read',
         [[['id','in',productIds]]], { fields: ['id','default_code','product_tmpl_id'], limit: 5000 });
-      const kitCodes = {};   // kit pid -> base code
-      const tmplToPids = {}; // template id -> [product ids] (non -K products only)
+      const kitCodes = {};   // post kit pid -> fallback base code (-K stripped)
+      const tmplToPids = {}; // template id -> [product ids]
       prodRecs.forEach(p => {
         const code = (p.default_code || '').trim();
-        if (/-K$/i.test(code)) { kitCodes[p.id] = code.replace(/-K$/i, ''); return; }
+        if (/-K$/i.test(code)) kitCodes[p.id] = code.replace(/-K$/i, '');
         const tid = Array.isArray(p.product_tmpl_id) ? p.product_tmpl_id[0] : p.product_tmpl_id;
         if (tid) { if (!tmplToPids[tid]) tmplToPids[tid] = []; tmplToPids[tid].push(p.id); }
       });
 
-      // Gates (and any other non -K kit) are phantom BoMs — stock sits on the parts
-      // (leaves, hinge posts, caps, hinges). QOH = complete sets buildable from parts.
       const tmplIds = Object.keys(tmplToPids).map(Number);
       if (tmplIds.length > 0) {
         const boms = await odooCall(uid, 'mrp.bom', 'search_read',
@@ -155,32 +155,46 @@ exports.handler = async function(event) {
             const cpid = Array.isArray(bl.product_id) ? bl.product_id[0] : bl.product_id;
             if (!bid || !cpid) return;
             if (!compsByBom[bid]) compsByBom[bid] = [];
-            compsByBom[bid].push({ pid: cpid, qty: bl.product_qty || 1 });
+            compsByBom[bid].push({ pid: cpid, qty: bl.product_qty || 1,
+              label: Array.isArray(bl.product_id) ? (bl.product_id[1] || '') : '' });
           });
           // Variant-specific BoM wins over a template-wide one
+          const kitVariant = {};
           boms.forEach(b => {
             const tid = Array.isArray(b.product_tmpl_id) ? b.product_tmpl_id[0] : b.product_tmpl_id;
             const vid = Array.isArray(b.product_id) ? b.product_id[0] : (b.product_id || 0);
             const comps = compsByBom[b.id];
             if (!comps || !comps.length) return;
             const bomQty = b.product_qty || 1;
-            const scaled = comps.map(c => ({ pid: c.pid, qty: c.qty / bomQty }));
             (tmplToPids[tid] || []).forEach(pid => {
               if (vid && vid !== pid) return;
+              if (kitCodes[pid] !== undefined) {
+                // Post kit: use the post line on the BoM (name contains "Post", not a cap)
+                if (!vid && kitVariant[pid]) return;
+                const post = comps.find(c => /\bpost\b/i.test(c.label) && !/\bcap\b/i.test(c.label));
+                if (!post) return;
+                const m = post.label.match(/^\[([^\]]+)\]/);
+                kitBaseMap[pid] = { basePid: post.pid, baseCode: m ? m[1] : post.label };
+                kitVariant[pid] = !!vid;
+                return;
+              }
               if (!vid && gateKitMap[pid] && gateKitMap[pid].variant) return;
-              gateKitMap[pid] = { comps: scaled, variant: !!vid };
+              gateKitMap[pid] = { comps: comps.map(c => ({ pid: c.pid, qty: c.qty / bomQty })), variant: !!vid };
             });
           });
         }
       }
-      const baseCodes = [...new Set(Object.values(kitCodes))];
-      if (baseCodes.length > 0) {
+
+      // Fallback for post kits with no BoM post: strip the -K suffix
+      const fallbackCodes = [...new Set(Object.entries(kitCodes)
+        .filter(([kitPid]) => !kitBaseMap[kitPid]).map(([, c]) => c))];
+      if (fallbackCodes.length > 0) {
         const baseRecs = await odooCall(uid, 'product.product', 'search_read',
-          [[['default_code','in',baseCodes]]], { fields: ['id','default_code'], limit: 1000 });
+          [[['default_code','in',fallbackCodes]]], { fields: ['id','default_code'], limit: 1000 });
         const baseIdByCode = {};
         baseRecs.forEach(b => { baseIdByCode[(b.default_code||'').trim()] = b.id; });
         Object.entries(kitCodes).forEach(([kitPid, baseCode]) => {
-          if (baseIdByCode[baseCode]) kitBaseMap[kitPid] = { basePid: baseIdByCode[baseCode], baseCode };
+          if (!kitBaseMap[kitPid] && baseIdByCode[baseCode]) kitBaseMap[kitPid] = { basePid: baseIdByCode[baseCode], baseCode };
         });
       }
     }
